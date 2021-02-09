@@ -50,6 +50,19 @@ You can view the default values by running the following command
 ```bash
 ./buffermanager -h
 ```
+In this template, we have the following parameters. However, you can/should add parameters as you dig deeper into the implementation.
+```bash
+int buffer_size_in_pages;	// b
+int disk_size_in_pages;   	// n
+int num_operations;    		// x
+int perct_reads;       		// e
+float skewed_perct;      	// s
+float skewed_data_perct; 	// d
+int algorithm;         		// a
+int pin_mode;   		// p
+int verbosity;         		// v
+```
+
 Currently this implementation has no bufferpool and no way to simulate read/writes. 
 Your job is to implement them and implement two/three eviction policies.
 
