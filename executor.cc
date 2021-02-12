@@ -35,6 +35,7 @@ Buffer *Buffer::getBufferInstance(Simulation_Environment *_env)
 
 int WorkloadExecutor::search(Buffer* buffer_instance, int pageId)
 {
+  return -1;
   // Implement Search in the Bufferpool
 }
 
@@ -42,7 +43,7 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int algorithm)
 {
   // Implement Read in the Bufferpool
 
-  return 1;
+  return -1;
 }
 
 
@@ -56,6 +57,7 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int algorithm)
 int WorkloadExecutor::unpin(Buffer* buffer_instance, int pageId)
 {
   // This is optional
+  return -1;
 }
 
 
@@ -77,7 +79,7 @@ int Buffer::LRUWSR()
 
 int Buffer::printBuffer()
 {
-  
+  return -1;
 }
 
 int Buffer::printStats()
@@ -92,4 +94,5 @@ int Buffer::printStats()
   cout << "Write IO: " << write_io << endl;  
   cout << "Global Clock: " << endl;
   cout << "******************************************************" << endl;
+  return 0;
 }
