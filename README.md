@@ -68,7 +68,7 @@ With simulation on disk, we will generate a raw database file named by "rawdata_
 Every read operation should read the specific page, go to the corresponding offset according to the workload, find out the whole entry
 as required. Similarly, every write option should update the corresponding entry with the new entry.
 Currently this implementation has no bufferpool and no way to simulate read/writes. 
-Your job is to implement them and implement two/three eviction policies.
+Your job is to implement them and implement three eviction policies.
 
 
 ## Contact
