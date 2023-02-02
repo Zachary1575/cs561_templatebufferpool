@@ -11,6 +11,7 @@ Simulation_Environment::Simulation_Environment()
 {
   int buffer_size_in_pages = 100;
   int disk_size_in_pages = 10000;
+  int entry_size = 128;
 
   int num_operations = 10000;
   float perct_reads = 70;
@@ -20,8 +21,10 @@ Simulation_Environment::Simulation_Environment()
   float skewed_perct = 100;
   float skewed_data_perct = 100;
 
-  int pin_mode = 0;
   int verbosity = 0;
+  bool pin_mode = false;
+
+  bool simulation_on_disk = false;
 }
 
 Simulation_Environment* Simulation_Environment::getInstance()

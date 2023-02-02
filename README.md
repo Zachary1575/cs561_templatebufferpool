@@ -39,7 +39,7 @@ The executable should be generated in the directory. Currently this template gen
 in a file named 'workload.txt'. It then reads this file and issues read/write requests based on the workload. An example command can be: 
 
 ```bash
-./buffermanager -b 150 -n 1500 -x 7500 -e 60 -a 1 -s 90 -d 10
+./buffermanager -b 150 -n 1500 -x 7500 -r 60 -a 1 -s 90 -d 10
 ```
 
 This generates a workload of 7500 operations with 60% reads where the bufferpool size is 150 pages and disk size is 1500 pages. 
@@ -55,14 +55,18 @@ In this template, we have the following parameters. However, you can/should add 
 int buffer_size_in_pages;	// b
 int disk_size_in_pages;   	// n
 int num_operations;    		// x
-int perct_reads;       		// e
+int entry_size;                 // e
+int perct_reads;       		// r
 float skewed_perct;      	// s
 float skewed_data_perct; 	// d
 int algorithm;         		// a
-int pin_mode;   		// p
 int verbosity;         		// v
+bool pin_mode;   		// enable pin_mode by adding "--pin_mode"
+bool simulation_on_disk;        // enable simulation on disk by adding "--simulation_on_dsik"
 ```
-
+With simulation on disk, we will generate a raw database file named by "rawdata_database.dat", fulfilled by specified number of pages.
+Every read operation should read the specific page, go to the corresponding offset according to the workload, find out the whole entry
+as required. Similarly, every write option should update the corresponding entry with the new entry.
 Currently this implementation has no bufferpool and no way to simulate read/writes. 
 Your job is to implement them and implement two/three eviction policies.
 

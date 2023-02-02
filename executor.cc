@@ -39,7 +39,7 @@ int WorkloadExecutor::search(Buffer* buffer_instance, int pageId)
   // Implement Search in the Bufferpool
 }
 
-int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int algorithm)
+int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int algorithm)
 {
   // Implement Read in the Bufferpool
 
@@ -47,7 +47,7 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int algorithm)
 }
 
 
-int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int algorithm)
+int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, const string new_entry, int algorithm)
 {
   // Implement Write in the Bufferpool
 
