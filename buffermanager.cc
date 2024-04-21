@@ -49,7 +49,7 @@ int main(int argc, char *argvx[])
   return 0;
 }
 
-
+// Runs the Workload & Simulation Environment
 int runWorkload(Simulation_Environment* _env) {
 
   // This method opens the workload file and according to the workload calls executor's read() or write() method
@@ -60,24 +60,25 @@ int runWorkload(Simulation_Environment* _env) {
 
   assert(workload_file);
 
-  char instruction;
-  int pageId;
-  int offset;
+  char instruction; // Instruction Buffer
+  int pageId; // Page ID Var
+  int offset; // Offset Var
   string tmp_new_entry;
+
   while(!workload_file.eof()) {
     
     workload_file >> instruction >> pageId;
     switch (instruction)
     {
-        case 'R':
-	  workload_file >> offset;
+        case 'R': // Read Instruction
+          workload_file >> offset;
           workload_executer.read(buffer_instance, pageId, offset, _env->algorithm);
           break;
 
-        case 'W':
-	  workload_file >> offset >> tmp_new_entry;
+        case 'W': // Write Instruction
+          workload_file >> offset >> tmp_new_entry;
           workload_executer.write(buffer_instance, pageId, offset, tmp_new_entry, _env->algorithm);
-	  tmp_new_entry.clear();
+          tmp_new_entry.clear();
           break;
     }
     instruction='\0';
