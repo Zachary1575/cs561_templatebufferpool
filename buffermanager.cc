@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <assert.h>
 #include <fstream>
+#include <vector>
 
 #include "args.hxx"
 #include "parameter.h"
@@ -34,7 +35,6 @@ int main(int argc, char *argvx[])
   if (_env->num_operations > 0) 
   {
     std::cerr << "Generating the workload... " << std::endl << std::flush;  
-
     // Generate Workload
     WorkloadGenerator workload_generator;
     workload_generator.generateWorkload();

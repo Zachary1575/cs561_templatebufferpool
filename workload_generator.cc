@@ -13,27 +13,37 @@ using namespace std;
 
 const char value_alphanum[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
+// I think this causes Buffer overruns
+// std::string get_random_entry(const int entry_size) {
+//     char *s = new char[(int)entry_size];
+//     for (int i = 0; i < entry_size; ++i) {
+//         s[i] = value_alphanum[rand() % (sizeof(value_alphanum) - 1)];
+//     }
+//     s[entry_size] = '\0';
+//     return s;
+// }
+
 std::string get_random_entry(const int entry_size) {
-    char *s = new char[(int)entry_size];
+    std::string s(entry_size, '\0');
     for (int i = 0; i < entry_size; ++i) {
         s[i] = value_alphanum[rand() % (sizeof(value_alphanum) - 1)];
     }
-    s[entry_size] = '\0';
-    return s;
+    return s;  // s is automatically null-terminated by std::string
 }
+
 
 void fill_raw_data(long num_pages, int entry_size) {
   ofstream raw_data_file("rawdata_database.dat", std::ofstream::binary);
   int entries_per_page = PAGE_SIZE/entry_size;
   char buffer[PAGE_SIZE];
   string tmp_entry;
-  //srand(time(0));
   for(long i = 0; i < num_pages; i++) {
     memset(buffer, 0, PAGE_SIZE);
     for(int j = 0; j < entries_per_page; j++) {
-	tmp_entry = get_random_entry(entry_size);
-	strcpy(buffer+j*entry_size, tmp_entry.c_str());
-	tmp_entry.clear();
+    	tmp_entry = get_random_entry(entry_size);
+      strncpy(buffer + j * entry_size, tmp_entry.c_str(), entry_size);
+    	// strcpy(buffer+j*entry_size, tmp_entry.c_str());
+    	tmp_entry.clear();
     }
     raw_data_file.write((char*)&buffer[0], PAGE_SIZE);
   }
@@ -58,7 +68,8 @@ int WorkloadGenerator::generateWorkload() {
   }
 
   int pageId;
-  int endPageId = _env->disk_size_in_pages*(_env->skewed_data_perct/100);
+  //int endPageId = _env->disk_size_in_pages*(_env->skewed_data_perct/100); // This is broken somehow
+  int endPageId = _env->disk_size_in_pages*(100/100);
   int entries_per_page = PAGE_SIZE/_env->entry_size;
   int offset; // the ordinal number of a entry, also known as the offset
   string tmp_new_entry;
@@ -68,8 +79,9 @@ int WorkloadGenerator::generateWorkload() {
 
     int typeDecider = rand() % 100;  
     int skewed = rand() % 100;
-
-    if (skewed < _env->skewed_perct)
+ 
+    // if (skewed < _env->skewed_perct) // Causes PageID Bugs, Dunno why...
+    if (skewed < 100)
     {
       pageId = rand() % endPageId;
     }

@@ -1,128 +1,247 @@
  
 #include "parameter.h"
 
-#include <iostream>
-#include <vector>
 #include <string>
+#include <vector>
+#include <iostream>
+#include <unordered_map> 
 
 using namespace std;
 
 namespace bufmanager {
 
-  // Page Implementation
+  // ------------------------------------------------ Page Implementation ------------------------------------------------
+  // > Each Offset is an index within a page
+  // > More to come later...
   class Page {
     private:
       int pageId;
-      int offset;
-      string entry;
+      char pageContent[4096];
+      bool dirty;
+
     public:
-      Page(int pageId, int offset, string entry); // Page Constructor
+      Page(int pageId); // Page Constructor
 
       int getPageID() const;
-      int getOffset() const;
-      string getEntry() const;
-      string getPageData() const;
+      void printAllPageEntries();
+      void insertEntryIntoPage(int offset, string entry);
   };
+  // ------------------------------------------------ Doubly Linked List & Hashmap for LRU ------------------------------------------------
+  // EACH PAGE IS CONSIDERED AS A NODE.
+  // Downside of this structure is that it takes lots of memory.
+  // To ADD data to the Cache: Takes O(1) as we add the page to the very beginning of the Doubly Linked List and Hashmap (add memory reference)
+  // To LOOKUP/ACCESS data in the Cache: Takes O(1) as we just need to look at a hashmap to look up the memory reference
+  // To EVICT/DELETE the Cache: Takes O(k) where 'k' is how many pages to delete or nodes. This is reflected on both the Doubly Linked List and Hashmap
+  // To REORDER the cache: Takes O(1) as we just look up the node, we then severe the next and prev while connecting the both nodes and then just preappend
 
-  // === This can be replaced with a more sophisticated Data Structure ===
-  // Then we do a Linked List implementation so we can move onto a Skip List Implementation
-  // ---------------------- Linked List ----------------------
-  template <typename T>
-  class Node {
+  // Memory that this takes is O(n)...
+
+  template<typename T>
+  class Node { // Each Node should hold a page
     public:
-        T data;
-        Node* next;
+      T data; 
+      Node<T>* prev;
+      Node<T>* next;
 
-        Node(T data) : data(data), next(nullptr) {} // Node Constructor
+      // Constructor
+      Node(T val) : data(val), prev(nullptr), next(nullptr) {}
   };
 
-  template <typename T>
-  class LinkedList {
+
+  template<typename T>
+  class DoublyLinkedList_Hashmap_LRU_Cache {
     public:
-        Node<T>* head;
-        int current_pages;
-        int buffer_max_page_cnt;
+      Node<T>* head;
+      Node<T>* tail;
+      unordered_map<int, Node<T>*> map; // The hashmap for fast lookups
+      int current_page_cnt;
+      int page_capacity;
 
-        LinkedList(int max_buffer_pages) : head(nullptr), current_pages(0), buffer_max_page_cnt(max_buffer_pages) {} // Linked List Constructor
-        ~LinkedList(); // Destructor
+      DoublyLinkedList_Hashmap_LRU_Cache(int cap) : head(nullptr), tail(nullptr), current_page_cnt(0), page_capacity(cap) {}
+      ~DoublyLinkedList_Hashmap_LRU_Cache() { clear();}
 
-        void insertFront(T data);
-        void insertBack(T data);
-        void deleteValue(T data);
-        void display() const;
-  };
-
-  template <typename T>
-  LinkedList<T>::~LinkedList() { // Deconstructor 
-      Node<T>* current = head; // Access the head
-      while (current != nullptr) {
-          Node<T>* next = current->next;
-          delete current; // Delete each of the node objects
-          current = next;
-      }
-  }
-
-  template <typename T>
-  void LinkedList<T>::insertFront(T data) { // insert front of LL (preffered)
-      Node<T>* newNode = new Node<T>(data);
-      newNode->next = head;
-      head = newNode;
-  }
-
-  template <typename T>
-  void LinkedList<T>::insertBack(T data) { // Insert back of LL
-      Node<T>* newNode = new Node<T>(data);
-      if (head == nullptr) {
-          head = newNode;
-      } else {
-          Node<T>* current = head;
-          while (current->next != nullptr) {
-              current = current->next;
+      void clear() {
+          Node<T>* currentNode = head;
+          while (currentNode != nullptr) {
+              Node<T>* nextNode = currentNode->next;
+              delete currentNode;
+              currentNode = nextNode;
           }
-          current->next = newNode;
+          head = tail = nullptr;
       }
-  }
 
-  template <typename T>
-  void LinkedList<T>::deleteValue(T data) { // Deletion value based on **Page** implementation
-      Node<T>* current = head;
-      Node<T>* previous = nullptr;
-      while (current != nullptr && current->data != data) {
-          previous = current;
-          current = current->next;
+      // ====== Hash Map Funcs. ======
+      string getPageString(string query) 
+      {
+        try 
+        {
+          return map.at(query)->data.getPageData();
+        } catch (const out_of_range &e) 
+        {
+          return "Key_Not_Found_in_Cache!";
+        }
       }
-      if (current == nullptr) return; // data not found
-      if (previous == nullptr) {
-          head = current->next;
-      } else {
-          previous->next = current->next;
-      }
-      delete current;
-  }
 
-  template <typename T>
-  void LinkedList<T>::display() const { // Display LL based on **Page** implementation
-      Node<T>* current = head;
-      while (current != nullptr) {
-          std::cout << current->data.getPageData() << " -> ";
-          current = current->next;
+      Node<T>* getPage(int pageId) 
+      {
+        try {
+          return map.at(pageId);
+        } catch (const out_of_range &e) {
+          return nullptr; // Return a Null PTR
+        }
       }
-      std::cout << "null" << std::endl;
-  }
 
-  // ------------------------------------------------
+      // ====== Doubly Linked List Funcs. ======
+      // Adds data to the doubly linked list, O(1) append
+      // HOWEVER, this function also evicts if we hit the cap.
+      // THIS IS A PAGE LEVEL ADD, A NODE IS A PAGE! (val -> PAGE in DB)
+      void prepend(T val, int pageId) 
+      {
+          if (current_page_cnt + 1 > page_capacity) { // If we add another page, if we go over count
+            printf("We hit page_capacity at: %d\n!", current_page_cnt);
+            // Then we need to perform LRU eviction
+          }
+
+          // We add the page.
+          printf("Added Page: %d\n", pageId);
+          Node<T>* newNode = new Node<T>(val);
+          if (head == nullptr) { // Empty list
+              head = tail = newNode;
+          } else {
+              newNode->next = head;
+              head->prev = newNode;
+              head = newNode;
+          }
+          map[pageId] = newNode; // Map<Query (as string), Node Reference>, later this is useful for lookups
+      }
+
+      // Buffer LOOKUP/ACCESSOR, if successful, it WILL rearrange the Doubly Linked List (as according to LRU Principles)!
+      // Returns the Page for processing, otherwise it returns 'nullptr'.
+      Page* lookupInBuffer(int pageId) 
+      {
+        if (getPage(pageId) == nullptr) // Cache Miss
+        {
+          printf("Cache Missed on Page: %d!\n", pageId);
+          return nullptr;
+        } 
+          else 
+        {
+          Node<Page>* node = getPage(pageId);
+          Page* bufferPage = &(node->data);
+          // Then we need to rearrange the node as it was just accessed
+          if (node == head) { // Node is already at the front, no need to move
+            return bufferPage;
+          }
+          // Detach node from its current position
+          if (node->prev) { 
+              node->prev->next = node->next;
+          }
+          if (node->next) {
+              node->next->prev = node->prev;
+          }
+          if (node == tail) { // If node is the tail, update the tail
+              tail = node->prev;
+          }
+
+          // Attach node at the front of the list
+          node->next = head;
+          node->prev = nullptr;
+          if (head) {
+              head->prev = node;
+          }
+          head = node;
+
+          // If the list was empty (shouldn't be the case here, but good to check)
+          if (tail == nullptr) {
+              tail = node;
+          }
+
+          return bufferPage;
+        }
+      }
+
+      // Probably not gonna use this func.
+      // Just here just in case...
+      // void append(T val) {
+      //     Node<T>* newNode = new Node<T>(val);
+      //     if (tail == nullptr) { // Empty list
+      //         head = tail = newNode;
+      //     } else {
+      //         tail->next = newNode;
+      //         newNode->prev = tail;
+      //         tail = newNode;
+      //     }
+      // }
+
+      // // Probably not gonna use this func.
+      // // Just here just in case...
+      // void insertAfter(Node<T>* prevNode, T val) {
+      //     if (prevNode == nullptr) {
+      //         return; // Ideally throw an exception or handle this case
+      //     }
+
+      //     Node<T>* newNode = new Node<T>(val);
+      //     newNode->next = prevNode->next;
+      //     newNode->prev = prevNode;
+          
+      //     if (prevNode->next == nullptr) { // Inserting at the end
+      //         tail = newNode;
+      //     } else {
+      //         prevNode->next->prev = newNode;
+      //     }
+      //     prevNode->next = newNode;
+      // }
+
+      // void remove(T val) {
+      //     Node<T>* currentNode = head;
+      //     while (currentNode != nullptr) {
+      //         if (currentNode->data == val) {
+      //             if (currentNode == head && currentNode == tail) { // Single node case
+      //                 head = tail = nullptr;
+      //             } else if (currentNode == head) { // Removing the head
+      //                 head = head->next;
+      //                 head->prev = nullptr;
+      //             } else if (currentNode == tail) { // Removing the tail
+      //                 tail = tail->prev;
+      //                 tail->next = nullptr;
+      //             } else { // Removing from middle
+      //                 currentNode->prev->next = currentNode->next;
+      //                 currentNode->next->prev = currentNode->prev;
+      //             }
+
+      //             delete currentNode;
+      //             return;
+      //         }
+      //         currentNode = currentNode->next;
+      //     }
+      // }
+
+      // Utility Functions
+      void display() const {
+        Node<T>* currentNode = head;
+        while (currentNode != nullptr) {
+            std::cout << currentNode->data.getPageData() << " " << "->" << " ";
+            currentNode = currentNode->next;
+        }
+        std::cout << "null" << std::endl;
+      }
+  };
+
+  // --------------------------------------------------------------------------------------------------------------------
   class Buffer {
     private:
-      // Change this according to the data structure your using...
-      LinkedList<Page> bufferpool;
-
       Buffer(Simulation_Environment* _env);
       static Buffer* buffer_instance;
 
     public:
+      int algorithm;
+      bool simulation_disk;
+      DoublyLinkedList_Hashmap_LRU_Cache<Page> bufferpool_LRU;
+
       static long max_buffer_size;  //in pages
       
       static Buffer* getBufferInstance(Simulation_Environment* _env);
+      static int determineBufferSize(Simulation_Environment* _env);
 
       static int buffer_hit;
       static int buffer_miss;
