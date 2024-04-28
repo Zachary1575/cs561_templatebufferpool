@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <fstream>
 #include <vector>
+#include <chrono>
 
 #include "args.hxx"
 #include "parameter.h"
@@ -20,6 +21,7 @@ int parse_arguments(int argc, char *argvx[], Simulation_Environment* _env);
 void printParameters(Simulation_Environment* _env);
 int runWorkload(Simulation_Environment* _env);
 
+std::chrono::steady_clock::time_point globalStart; // Global start point
 
 int main(int argc, char *argvx[])
 {
@@ -58,6 +60,8 @@ int runWorkload(Simulation_Environment* _env) {
   ifstream workload_file;
   workload_file.open("workload.txt");
 
+  // auto& bufferpool = buffer_instance->bufferpool_LRU; // Incase for debug
+
   assert(workload_file);
 
   char instruction; // Instruction Buffer
@@ -65,8 +69,8 @@ int runWorkload(Simulation_Environment* _env) {
   int offset; // Offset Var
   string tmp_new_entry;
 
+  globalStart = std::chrono::steady_clock::now(); // Timer Start
   while(!workload_file.eof()) {
-    
     workload_file >> instruction >> pageId;
     switch (instruction)
     {
@@ -83,6 +87,14 @@ int runWorkload(Simulation_Environment* _env) {
     }
     instruction='\0';
   }
+
+  // Stop the Clock
+  auto now = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - globalStart).count();
+  std::cout << "Elapsed time: " << elapsed << " ms" << std::endl;
+
+  Buffer::printBufferStats(buffer_instance);
+
   return 1;
 }
 

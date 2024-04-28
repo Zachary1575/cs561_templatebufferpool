@@ -28,8 +28,12 @@ Buffer::Buffer(Simulation_Environment *_env)
 {
   algorithm = _env->algorithm;
   simulation_disk = _env->simulation_on_disk;
+  entry_size = _env->entry_size;
 
   // I keep forgetting what each is each
+  cout << "****************************************************************" << endl;
+  cout << "Creating Buffer Pool Instance!" << endl;
+  cout << "****************************************************************" << endl;
   cout << "Buffer Size in Pages: " << _env->buffer_size_in_pages << endl;
   cout << "Disk Size in Pages: " << _env->disk_size_in_pages << endl;
   cout << "Entry Size: " << _env->entry_size << endl;
@@ -59,42 +63,45 @@ Buffer *Buffer::getBufferInstance(Simulation_Environment *_env)
   if (buffer_instance == 0)
     printf("%s\n", "No Buffer Pool Detected. Creating a New Buffer Pool.");
     buffer_instance = new Buffer(_env);
+    cout << "****************************************************************" << endl;
+    std::cout << "The address of Buffer is: " << buffer_instance << std::endl;
+    cout << "****************************************************************" << endl;
   return buffer_instance;
 }
 
-int Buffer::LRU()
-{
-  int index = 0;
-  
-  // Implement LRU
-  // This is the LRU algorithm.
-
-  return index;
-}
-
+// ==== Eviction Algorithms ====
 int Buffer::LRUWSR()
 {
   // Implement LRUWSR
   return -1;
 }
 
-int Buffer::printBuffer()
-{
-  return -1;
-}
-
+// Statistics with Simulation Environments
 int Buffer::printStats()
 {
   Simulation_Environment* _env = Simulation_Environment::getInstance();
-  cout << "******************************************************" << endl;
+  cout << "\n\n********************** Overall Statistics **********************" << endl;
   cout << "Printing Stats..." << endl;
   cout << "Number of operations: " << _env->num_operations << endl;
   cout << "Buffer Hit: " << buffer_hit << endl;
   cout << "Buffer Miss: " << buffer_miss << endl;
+  cout << "DISK SIMULATION: " << (_env->simulation_on_disk ? "Yes" : "No (Disk & Write IO should be '0')") << endl;
   cout << "Read IO: " << read_io << endl;
-  cout << "Write IO: " << write_io << endl;  
+  cout << "Write IO: " << write_io << endl; 
   cout << "Global Clock: " << endl;
-  cout << "******************************************************" << endl;
+  cout << "****************************************************************" << endl;
+  return 0;
+}
+
+// Print specific
+
+int Buffer::printBufferStats(Buffer* buffer_instance)
+{
+  auto& bufferpool = buffer_instance->bufferpool_LRU;
+  cout << "\n\n********************** Buffer Statistics ***********************" << endl;
+  cout << "Printing Buffer Stats..." << endl;
+  cout << "Eviction Call Count: " << bufferpool.algorithm_eviction_count << endl; // (How many times the cache evicted data ex. Calling LRU)
+  cout << "****************************************************************" << endl;
   return 0;
 }
 
@@ -102,63 +109,191 @@ int Buffer::printStats()
 
 int WorkloadExecutor::search(Buffer* buffer_instance, int pageId)
 {
-  return -1;
-  // Implement Search in the Bufferpool
+  return -1; // Dunno if I need this
 }
 
 int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int algorithm)
 {
   printf("\nRead Instruction Issued: (pageID~%d, offset~%d, algorithm~%d)\n", pageId, offset, algorithm);
-  
   if (algorithm == 1) { // LRU
-    DoublyLinkedList_Hashmap_LRU_Cache<Page> bufferpool = buffer_instance->bufferpool_LRU;
+    auto& bufferpool = buffer_instance->bufferpool_LRU;
+    auto& disk_sim = buffer_instance->simulation_disk;
     
     // Search in Hashmap to see if that pageID is made...
     Page* cache_page = bufferpool.lookupInBuffer(pageId);
     if (cache_page == nullptr) // If we yield no such page in the Bufferpool
     {
-      // Buffer MISS
-      Buffer::buffer_miss++;
-      if (buffer_instance->simulation_disk) // DISK SIMULATION
+      Buffer::buffer_miss++; // Buffer MISS
+      if (disk_sim) // DISK SIMULATION
       {
-        
+        string datFilePath = "./rawdata_database.dat";
+        std::fstream file(datFilePath, std::ios::in | std::ios::out | std::ios::binary);
+        if (!file) 
+        {
+          std::cerr << "Unable to open file." << std::endl;
+          return 1;
+        }
+        int byteStart = pageId * 4096; // 4KB page
+        file.seekg(byteStart, std::ios::beg);
+
+        if (!file) 
+        {
+            std::cerr << "Seek failed. Check if the position is beyond the file size." << std::endl;
+            file.close();
+            return 1;
+        }
+        Page bufferPage = Page(pageId);
+
+        file.read(bufferPage.getPageContent(), 4096); // Read the database entries into a buffer page, 4096 because of page size
+        // bufferPage.printAllPageEntries(); // For Debug
+
+        if (!file) {
+          std::cerr << "Read failed. Check if there are enough bytes left in the file." << std::endl;
+          file.close();
+          return 1;
+        }
+        file.close();
+        bufferpool.prepend(bufferPage, pageId, disk_sim); // Insert the page into the Buffer pool
+        Buffer::read_io++;
+        return 1;
       } 
         else // NOT DISK SIMULATION
       {
         Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
-        bufferpool.prepend(x, pageId); // Insert the page into the Buffer pool
+        bufferpool.prepend(x, pageId, disk_sim); // Insert the page into the Buffer pool
+        // printf("[DEBUG] "); // Debug
+        //bufferpool.display(); // Will slowdown and effect Runtime
       }
-
-      return -1;
+      return 1;
     } 
       else 
     {
-      // Buffer HIT
-      Buffer::buffer_hit++;
-      if (buffer_instance->simulation_disk) // DISK SIMULATION
+      Buffer::buffer_hit++; // Buffer HIT
+      if (disk_sim) // DISK SIMULATION
       {
-
+        Page hitBufferPage = bufferpool.getPage(pageId)->data;
+        char* buffer = hitBufferPage.getPageContent();
+        auto& entry_size = buffer_instance->entry_size;
+        string entry = "";
+        for (int i = offset; i < offset + entry_size; i++) // Runtime is O(k) where k is the size of the entry.
+        {
+          entry = entry + buffer[i];
+        }
+        printf("[READ CACHE HIT | DISK SIMULATION] Page & Offset Query: %d, %d. Returned Entry: %s\n", pageId, offset, entry.c_str());
+        return 1;
       } 
         else // NOT DISK SIMULATION
       { 
-        printf("[NOT DISK SIMULATION] Getting Entry and Pretending to Return Data to Satisfy Query: %d, %d.\n", pageId, offset);
+        printf("[READ CACHE HIT | NOT DISK SIMULATION] Getting Entry and Pretending to Return Data to Satisfy Query: %d, %d.\n", pageId, offset);
+        // printf("[DEBUG] "); // Debug
+        // bufferpool.display(); // Will slowdown and effect Runtime
       }
     }
   }
 
-  return -1;
+  return 1;
 }
 
 int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, const string new_entry, int algorithm)
 {
   printf("\nWrite Instruction Issued: (pageID~%d, offset~%d, entry~%s, algorithm~%d)\n", pageId, offset, new_entry.c_str(), algorithm);
+    if (algorithm == 1) { // LRU
+      auto& bufferpool = buffer_instance->bufferpool_LRU;
+      auto& disk_sim = buffer_instance->simulation_disk;
+      
+      // Search in Hashmap to see if that pageID is made...
+      Page* cache_page = bufferpool.lookupInBuffer(pageId);
+      if (cache_page == nullptr) // If we yield no such page in the Bufferpool
+      {
+        Buffer::buffer_miss++; // Buffer MISS
+        if (disk_sim) // DISK SIMULATION
+        {
+          string datFilePath = "./rawdata_database.dat";
+          std::fstream file(datFilePath, std::ios::in | std::ios::out | std::ios::binary);
+          if (!file) 
+          {
+            std::cerr << "Unable to open file." << std::endl;
+            return 1;
+          }
+          int byteStart = pageId * 4096; // 4KB page
+          file.seekg(byteStart, std::ios::beg);
 
+          if (!file) 
+          {
+              std::cerr << "Seek failed. Check if the position is beyond the file size." << std::endl;
+              file.close();
+              return 1;
+          }
+          Page bufferPage = Page(pageId);
+
+          file.read(bufferPage.getPageContent(), 4096); // Read the database entries into a buffer page, 4096 because of page size
+          // bufferPage.printAllPageEntries(); // For Debug
+
+          if (!file) {
+            std::cerr << "Read failed. Check if there are enough bytes left in the file." << std::endl;
+            file.close();
+            return 1;
+          }
+          file.close();
+
+          // We then write the requested entry into the page
+          char* buffer = bufferPage.getPageContent();
+          auto& entry_size = buffer_instance->entry_size;
+          int entry_cnter = 0;
+          for (int i = offset; i < offset + entry_size; i++) // Runtime is O(k) where k is the size of the entry.
+          {
+            buffer[i] = new_entry[entry_cnter]; // Here we write to our buffer page
+            entry_cnter++;
+          }
+          bufferPage.setDirtyPage(true); // Set the page is dirty as it doesnt reflect the actual database data
+          bufferpool.prepend(bufferPage, pageId, disk_sim); // Insert the page into the Buffer pool
+          Buffer::write_io++;
+          return 1;
+        } 
+          else // NOT DISK SIMULATION
+        {
+          Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
+          // We then write in it... (pretend it does here)
+          x.setDirtyPage(true); // Set the page to be dirty
+          bufferpool.prepend(x, pageId, disk_sim); // Insert the page into the Buffer pool
+          printf("[DEBUG] "); // Debug
+          bufferpool.display(); // Will slowdown and effect Runtime
+        }
+        return 1;
+      } 
+        else 
+      {
+        Buffer::buffer_hit++; // Buffer HIT
+        if (disk_sim) // DISK SIMULATION
+        {
+          Page hitBufferPage = bufferpool.getPage(pageId)->data;
+          char* buffer = hitBufferPage.getPageContent();
+          auto& entry_size = buffer_instance->entry_size;
+          int entry_cnter = 0;
+          string entry = "";
+          for (int i = offset; i < offset + entry_size; i++) // Runtime is O(k) where k is the size of the entry.
+          {
+            buffer[i] = new_entry[entry_cnter]; // Here we write to our buffer page
+            entry = entry +  buffer[i]; // Just as a sanity check
+            entry_cnter++;
+          }
+          printf("[WRITE CACHE HIT | DISK SIMULATION] Page & Offset Query: %d, %d. WRITTEN & Returned Entry: %s\n", pageId, offset, entry.c_str());
+          return 1;
+        } 
+          else // NOT DISK SIMULATION
+        { 
+          printf("[WRITE CACHE HIT | NOT DISK SIMULATION] Getting Entry and Pretending to WRITE & Return Data to Satisfy Query: %d, %d.\n", pageId, offset);
+          printf("[DEBUG] "); // Debug
+          bufferpool.display(); // Will slowdown and effect Runtime
+        }
+      }
+    }
   return 1;
 }
 
 int WorkloadExecutor::unpin(Buffer* buffer_instance, int pageId)
 {
-  // This is optional
+  // This is optional I think?
   return -1;
 }
 
@@ -174,13 +309,8 @@ Page::Page(int pageId)
 }
 
 // ---- Page Instance Methods ----
-void Page::insertEntryIntoPage(int offset, string entry) 
-{
-  int index = offset;
-  for (char c: entry) {
-    pageContent[index] = c;
-    index++;
-  }
+char* Page::getPageContent() {
+    return pageContent;
 }
 
 void Page::printAllPageEntries() 
@@ -192,6 +322,16 @@ void Page::printAllPageEntries()
     }
   }
   printf("\n\nPAGE %d: %s \n", pageId, overall_string.c_str());
+}
+
+void Page::setDirtyPage(bool dirty)
+{
+  Page::dirty = dirty;
+}
+
+bool Page::isDirtyPage() const 
+{
+  return dirty;
 }
 
 int Page::getPageID() const 

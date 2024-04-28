@@ -22,7 +22,10 @@ namespace bufmanager {
     public:
       Page(int pageId); // Page Constructor
 
+      char* getPageContent();
+      bool isDirtyPage() const;
       int getPageID() const;
+      void setDirtyPage(bool dirty);
       void printAllPageEntries();
       void insertEntryIntoPage(int offset, string entry);
   };
@@ -56,8 +59,9 @@ namespace bufmanager {
       unordered_map<int, Node<T>*> map; // The hashmap for fast lookups
       int current_page_cnt;
       int page_capacity;
+      int algorithm_eviction_count;
 
-      DoublyLinkedList_Hashmap_LRU_Cache(int cap) : head(nullptr), tail(nullptr), current_page_cnt(0), page_capacity(cap) {}
+      DoublyLinkedList_Hashmap_LRU_Cache(int cap) : head(nullptr), tail(nullptr), current_page_cnt(0), page_capacity(cap), algorithm_eviction_count(0) {}
       ~DoublyLinkedList_Hashmap_LRU_Cache() { clear();}
 
       void clear() {
@@ -95,15 +99,23 @@ namespace bufmanager {
       // Adds data to the doubly linked list, O(1) append
       // HOWEVER, this function also evicts if we hit the cap.
       // THIS IS A PAGE LEVEL ADD, A NODE IS A PAGE! (val -> PAGE in DB)
-      void prepend(T val, int pageId) 
+      void prepend(T val, int pageId, bool Disk_Simulation) 
       {
           if (current_page_cnt + 1 > page_capacity) { // If we add another page, if we go over count
-            printf("We hit page_capacity at: %d\n!", current_page_cnt);
+            printf("We hit page_capacity at: %d!\n", current_page_cnt);
             // Then we need to perform LRU eviction
+            // We need to take cache hit rate, cache miss rate, then evict 1- 50% of the total capacity
+            int pages_to_evict = page_capacity * 0.25; // For now lets pretend we evict 25% of our cache (alot!)
+            if (pages_to_evict == 0) {
+              pages_to_evict = 1;
+            }
+            printf("[LRU] We are evicting this number of pages: %d!\n", pages_to_evict);
+            deleteLastXPages(pages_to_evict, Disk_Simulation);
+            current_page_cnt = current_page_cnt - pages_to_evict;
+            algorithm_eviction_count++;
           }
 
           // We add the page.
-          printf("Added Page: %d\n", pageId);
           Node<T>* newNode = new Node<T>(val);
           if (head == nullptr) { // Empty list
               head = tail = newNode;
@@ -113,6 +125,7 @@ namespace bufmanager {
               head = newNode;
           }
           map[pageId] = newNode; // Map<Query (as string), Node Reference>, later this is useful for lookups
+          current_page_cnt++;
       }
 
       // Buffer LOOKUP/ACCESSOR, if successful, it WILL rearrange the Doubly Linked List (as according to LRU Principles)!
@@ -121,11 +134,12 @@ namespace bufmanager {
       {
         if (getPage(pageId) == nullptr) // Cache Miss
         {
-          printf("Cache Missed on Page: %d!\n", pageId);
+          printf("[DEBUG] Cache Missed on Page: %d!\n", pageId);
           return nullptr;
         } 
           else 
         {
+          printf("[DEBUG] Cache Hit on Page: %d!\n", pageId);
           Node<Page>* node = getPage(pageId);
           Page* bufferPage = &(node->data);
           // Then we need to rearrange the node as it was just accessed
@@ -160,67 +174,80 @@ namespace bufmanager {
         }
       }
 
-      // Probably not gonna use this func.
-      // Just here just in case...
-      // void append(T val) {
-      //     Node<T>* newNode = new Node<T>(val);
-      //     if (tail == nullptr) { // Empty list
-      //         head = tail = newNode;
-      //     } else {
-      //         tail->next = newNode;
-      //         newNode->prev = tail;
-      //         tail = newNode;
-      //     }
-      // }
+      void deleteLastXPages(int x, bool Disk_Simulation) {
+        if (x <= 0) { // Sanity Check & Safety: Nothing to delete if x is zero or negative
+            return; 
+        }
 
-      // // Probably not gonna use this func.
-      // // Just here just in case...
-      // void insertAfter(Node<T>* prevNode, T val) {
-      //     if (prevNode == nullptr) {
-      //         return; // Ideally throw an exception or handle this case
-      //     }
+        int count = 0;
+        while (tail != nullptr && count < x) {
+            Node<T>* nodeToDelete = tail;
+            int pageId = nodeToDelete->data.getPageID(); // Assuming Node<T> stores data that has getPageID()
 
-      //     Node<T>* newNode = new Node<T>(val);
-      //     newNode->next = prevNode->next;
-      //     newNode->prev = prevNode;
-          
-      //     if (prevNode->next == nullptr) { // Inserting at the end
-      //         tail = newNode;
-      //     } else {
-      //         prevNode->next->prev = newNode;
-      //     }
-      //     prevNode->next = newNode;
-      // }
+            if (Disk_Simulation && (nodeToDelete->data.isDirtyPage())) {
+              cout << "[DEBUG] Flushing Dirty Page to DB! Page ID: " << pageId << endl;
+              // We index based off of pageID and then write the page in the .dat file.
+              string datFilePath = "./rawdata_database.dat";
+              std::fstream file(datFilePath, std::ios::in | std::ios::out | std::ios::binary);
+              if (!file) 
+              {
+                std::cerr << "Unable to open file." << std::endl;
+                return;
+              }
+              int byteStart = pageId * 4096; // 4KB page
+              file.seekg(byteStart, std::ios::beg);
 
-      // void remove(T val) {
-      //     Node<T>* currentNode = head;
-      //     while (currentNode != nullptr) {
-      //         if (currentNode->data == val) {
-      //             if (currentNode == head && currentNode == tail) { // Single node case
-      //                 head = tail = nullptr;
-      //             } else if (currentNode == head) { // Removing the head
-      //                 head = head->next;
-      //                 head->prev = nullptr;
-      //             } else if (currentNode == tail) { // Removing the tail
-      //                 tail = tail->prev;
-      //                 tail->next = nullptr;
-      //             } else { // Removing from middle
-      //                 currentNode->prev->next = currentNode->next;
-      //                 currentNode->next->prev = currentNode->prev;
-      //             }
+              if (!file) 
+              {
+                  std::cerr << "Seek failed. Check if the position is beyond the file size." << std::endl;
+                  file.close();
+                  return;
+              }
 
-      //             delete currentNode;
-      //             return;
-      //         }
-      //         currentNode = currentNode->next;
-      //     }
-      // }
+              char* buffer = nodeToDelete->data.getPageContent();
+              for (int i = 0; i < 4096; ++i) { // 4KB of 4096 bytes
+                  if (buffer[i] != '0') {  // Write only non-zero bytes
+                      // Move the file position pointer to the correct position for writing
+                      file.seekp(byteStart + i, std::ios::beg);
+                      if (!file) {
+                          std::cerr << "Seek failed when trying to write." << std::endl;
+                          file.close();
+                          return;
+                      }
+
+                      // Write the byte back to the file
+                      file.write(&buffer[i], 1);
+                      if (!file) {
+                          std::cerr << "Write failed." << std::endl;
+                          file.close();
+                          return;
+                      }
+                  }
+              }
+
+              // Close the file
+              file.close();
+            }
+            map.erase(pageId); // Delete the hashmap entry
+
+            tail = tail->prev;
+            if (tail != nullptr) {
+                tail->next = nullptr;
+            } else {
+                head = nullptr; // If tail is nullptr now, it means we've deleted the last node, hence list is empty
+            }
+            delete nodeToDelete; // Free the memory allocated to the node
+            count++;
+            current_page_cnt--;
+        }
+      }
 
       // Utility Functions
+      // This function displays the sequence of pages in the node
       void display() const {
         Node<T>* currentNode = head;
         while (currentNode != nullptr) {
-            std::cout << currentNode->data.getPageData() << " " << "->" << " ";
+            std::cout << currentNode->data.getPageID() << " " << "->" << " ";
             currentNode = currentNode->next;
         }
         std::cout << "null" << std::endl;
@@ -235,6 +262,7 @@ namespace bufmanager {
 
     public:
       int algorithm;
+      int entry_size;
       bool simulation_disk;
       DoublyLinkedList_Hashmap_LRU_Cache<Page> bufferpool_LRU;
 
@@ -248,11 +276,12 @@ namespace bufmanager {
       static int read_io;
       static int write_io;
 
-      int LRU();
+      void LRU(int x);
       int LRUWSR();
 
       static int printBuffer();
       static int printStats();
+      static int printBufferStats(Buffer* buffer_instance);
   };
 
   class Disk {
