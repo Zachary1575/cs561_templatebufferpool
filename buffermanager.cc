@@ -114,7 +114,7 @@ int parse_arguments(int argc,char *argvx[], Simulation_Environment* _env) {
   args::ValueFlag<int> num_operations_cmd(group1, "x", "Total number of operations to be performed [def: 10000]", {'x', "num_operations"});
   args::ValueFlag<int> perct_reads_cmd(group1, "r", "Percentage of read in workload [def: 70.0%]", {'r', "perct_reads"});
   args::ValueFlag<int> verbosity_cmd(group1, "v", "The verbosity level of execution [0,1,2; def:0]", {'v', "verbosity"});
-  args::ValueFlag<int> algorithm_cmd(group1, "a", "Algorithm of page eviction []", {'a', "algorithm"});
+  args::ValueFlag<int> algorithm_cmd(group1, "a", "Algorithm of page eviction [1: LRU, 2: CFLRU, 3: LRU-WSR, default: 0 (None Specified)]", {'a', "algorithm"}); //Added description of algorithms implemented
   args::ValueFlag<int> skewed_perct_cmd(group1, "s", "Skewed distribution of operation on data [s% r/w on d% data, def: 100]", {'s', "skewed_perct"});
   args::ValueFlag<int> skewed_data_perct_cmd(group1, "d", "Skewed distribution of operation on data [s% r/w on d% data, def: 100]", {'d', "skewed_data_perct"});
   args::Flag pin_mode_cmd(group1, "p", "Enabled the pin mode", {'p', "pin_mode"});
@@ -150,7 +150,7 @@ int parse_arguments(int argc,char *argvx[], Simulation_Environment* _env) {
   _env->perct_reads = perct_reads_cmd ? args::get(perct_reads_cmd) : 70.0;
   _env->perct_writes = 100.0 - _env->perct_reads;
   _env->verbosity = verbosity_cmd ? args::get(verbosity_cmd) : 0;
-  _env->algorithm = algorithm_cmd ? args::get(algorithm_cmd) : 0;
+  _env->algorithm = algorithm_cmd ? args::get(algorithm_cmd) : 0; 
   _env->skewed_perct = skewed_perct_cmd ? args::get(skewed_perct_cmd) : 100;
   _env->skewed_data_perct = skewed_data_perct_cmd ? args::get(skewed_data_perct_cmd) : 100;
   _env->pin_mode = pin_mode_cmd ? args::get(pin_mode_cmd) : false;

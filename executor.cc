@@ -49,14 +49,15 @@ Buffer::Buffer(Simulation_Environment *_env)
   cout << "Simulation on Disk: " << (_env->simulation_on_disk ? "Yes" : "No") << endl;
 }
 
+// Change Made - buffer size shoould correctly initialize for all algorithms used - RGVA
 int Buffer::determineBufferSize(Simulation_Environment* _env) 
 {
-  if (_env->algorithm == 1) {
+  //if (_env->algorithm == 1) {
       return _env->buffer_size_in_pages;
-  } else {
-      return 0;  // Example: default or minimum size for other algorithms
-  }
+  //} else {
+      //return 0;  // Example: default or minimum size for other algorithms
 }
+
 
 Buffer *Buffer::getBufferInstance(Simulation_Environment *_env)
 {
@@ -191,6 +192,10 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
     }
   }
 
+  if (algorithm == 2) { // CFLRU
+    buffer_instance->cflruReferPage(pageId, false); //This is set to false as it is a read operation - RGVA
+  }
+
   return 1;
 }
 
@@ -288,6 +293,11 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
         }
       }
     }
+
+    if (algorithm == 2) { // CFLRU
+      buffer_instance->cflruReferPage(pageId, true); //This is set to true as it is a write operation - RGVA
+    }
+
   return 1;
 }
 

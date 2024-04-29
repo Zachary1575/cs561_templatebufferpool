@@ -260,6 +260,7 @@ namespace bufmanager {
       Buffer(Simulation_Environment* _env);
       static Buffer* buffer_instance;
 
+
     public:
       int algorithm;
       int entry_size;
@@ -282,6 +283,161 @@ namespace bufmanager {
       static int printBuffer();
       static int printStats();
       static int printBufferStats(Buffer* buffer_instance);
+
+      //******CFLRU METHOD - PAGE REFERENCE *****//
+      // Added Disk I/O Operations
+
+      void cflruReferPage(int pageId, bool isWrite) {
+    Node<Page>* node = bufferpool_LRU.getPage(pageId);
+
+    if (node == nullptr) {
+        buffer_miss++;
+        std::cout << "Page miss for: " << pageId << std::endl;
+
+        if (bufferpool_LRU.current_page_cnt >= max_buffer_size) {
+            cflruEvictPage(); // Evict pages if the buffer is full
+        }
+
+        if (simulation_disk) {
+            Page newPage = simulateDiskRead(pageId);
+            newPage.setDirtyPage(isWrite);
+            bufferpool_LRU.prepend(newPage, pageId, true);
+            read_io++; // Properly increment Read IO only when actually reading from disk.
+        } else {
+            Page newPage(pageId); // Create a new page in memory without disk I/O
+            newPage.setDirtyPage(isWrite);
+            bufferpool_LRU.prepend(newPage, pageId, false);
+        }
+    } else {
+        buffer_hit++;
+        std::cout << "Buffer hit for page: " << pageId << std::endl;
+        if (isWrite && !node->data.isDirtyPage()) {
+            node->data.setDirtyPage(true);
+            if (simulation_disk) {
+                // Increment write IO when changing the state of a page to dirty under simulation.
+                write_io++;
+            }
+        }
+        moveFront(node);
+    }
+}
+
+
+      //******CFLRU METHOD - PAGE EVICTION *****//
+
+      void cflruEvictPage() {
+        //Clean-First LRU Logic: Find least recently used clean page and evict it
+        Node<Page>* current = bufferpool_LRU.head;
+        bool leastRecentClean = false;
+
+        while (current != nullptr && !leastRecentClean) {
+          if (!current->data.isDirtyPage()) {
+            leastRecentClean = true;
+            //Evict clean page
+            cout << "CFLRU Evicting clean page: " << current->data.getPageID() << endl;
+            removeNode(current);
+          }
+          current = current->next;
+        }
+
+        if (!leastRecentClean && bufferpool_LRU.tail != nullptr) {
+          cout << "CFLRU falling back to evicting the last used page. (LRU)" << endl;
+          if (bufferpool_LRU.tail->data.isDirtyPage() && simulation_disk) {
+            writeBackToDisk(bufferpool_LRU.tail->data);
+            write_io++;
+          }
+          removeNode(bufferpool_LRU.tail);
+        }
+      }
+
+      void removeNode(Node<Page>* node) {
+        if (node->prev) node->prev->next = node->next;
+        if (node->next) node->next->prev = node->prev;
+        if (node == bufferpool_LRU.head) bufferpool_LRU.head = node->next;
+        if (node == bufferpool_LRU.tail) bufferpool_LRU.tail = node->prev;
+
+        bufferpool_LRU.map.erase(node->data.getPageID());
+        delete node;
+    }
+
+      void writeBackToDisk(Page& page) {
+        cout << "[DEBUG] Writing back dirty page to disk: Page ID: " << page.getPageID() << endl;
+
+        // Define the path to the simulated disk file
+        string datFilePath = "./rawdata_database.dat";
+        fstream file(datFilePath, ios::in | ios::out | ios::binary);
+
+        if (!file) {
+            cerr << "Unable to open file for writing back page to disk." << endl;
+            return;
+        }
+
+        // Calculate the byte offset in the file where this page's data should be written
+        int byteStart = page.getPageID() * 4096; // Assuming 4KB page size
+
+        // Seek to the correct position in the file
+        file.seekp(byteStart, ios::beg);
+        if (!file) {
+            cerr << "Seek failed while trying to write back dirty page to disk." << endl;
+            file.close();
+            return;
+        }
+
+        // Write the page content back to the disk file
+        file.write(page.getPageContent(), 4096); // Writing the entire page content (4096 bytes)
+        if (!file) {
+            cerr << "Write failed while writing back dirty page to disk." << endl;
+        }
+
+        file.close(); // Close the file after writing
+    }
+
+
+
+      //******CFLRU HELPER METHOD - MOVE PAGE TO FRONT *****//
+      void moveFront(Node<Page>* node) {
+        if (node != bufferpool_LRU.head) { //If it is not the first page in the buffer
+          if (node->prev) node->prev->next = node->next;
+          if (node->next) node->next->prev = node->prev;
+          if (node == bufferpool_LRU.tail) bufferpool_LRU.tail = node->prev;
+
+          node->next = bufferpool_LRU.head;
+          node->prev = nullptr;
+          if (bufferpool_LRU.head) {
+            bufferpool_LRU.head->prev = node;
+          }
+          bufferpool_LRU.head = node;
+        }
+      }
+
+      //******CFLRU METHOD - SIMULATE DISK READ - borrowed from Zach :) *****//
+      Page simulateDiskRead(int pageId) {
+        std::string datFilePath = "./rawdata_database.dat";
+        std::fstream file(datFilePath, std::ios::in | std::ios::out | std::ios::binary);
+        if (!file) {
+          std::cerr << "Unable to open file." << std::endl;
+          throw std::runtime_error("Disk read simulation failed - could not open file."); 
+        }
+
+        int byteStart = pageId * 4096; // 4KB page
+        file.seekg(byteStart, std::ios::beg);
+        if (!file) {
+          file.close();
+          std::cerr << "Seek failed. Check if the position is beyond the file size." << std::endl;
+          throw std::runtime_error("Disk read simulation failed - seek failed.");
+        }
+
+        Page bufferPage(pageId);
+        file.read(bufferPage.getPageContent(), 4096); // Read 4KB of data into the buffer
+        if (!file) {
+          std::cerr << "Read failed. Check if there are enough bytes left in the file. " << std::endl;
+          file.close();
+          throw std::runtime_error("Disk read simulation failed - read failed.");
+        }
+        file.close();
+        std::cout << "Disk read simulation succeeded for page: " << pageId << std::endl; // Debug print - RGVA
+        return bufferPage;
+      }
   };
 
   class Disk {
