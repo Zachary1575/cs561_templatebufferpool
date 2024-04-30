@@ -162,7 +162,7 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
       {
         Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
         bufferpool.prepend(x, pageId, disk_sim); // Insert the page into the Buffer pool
-        // printf("[DEBUG] "); // Debug
+        //printf("[DEBUG] "); // Debug
         //bufferpool.display(); // Will slowdown and effect Runtime
       }
       return 1;
@@ -186,14 +186,34 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
         else // NOT DISK SIMULATION
       { 
         printf("[READ CACHE HIT | NOT DISK SIMULATION] Getting Entry and Pretending to Return Data to Satisfy Query: %d, %d.\n", pageId, offset);
-        // printf("[DEBUG] "); // Debug
-        // bufferpool.display(); // Will slowdown and effect Runtime
+        //printf("[DEBUG] "); // Debug
+        //bufferpool.display(); // Will slowdown and effect Runtime
       }
     }
   }
 
   if (algorithm == 2) { // CFLRU
-    buffer_instance->cflruReferPage(pageId, false); //This is set to false as it is a read operation - RGVA
+    auto& bufferpool = buffer_instance->bufferpool_LRU;
+    auto& disk_sim = buffer_instance->simulation_disk;
+    
+    Page* cache_page = bufferpool.lookupInBuffer(pageId);
+    if (cache_page == nullptr) {
+      Buffer::buffer_miss++;
+      if (bufferpool.current_page_cnt >= Buffer::max_buffer_size) {
+        buffer_instance->cflruEvictPage(); // Evict pages using CFLRU logic
+      }
+      Page newPage = buffer_instance->simulateDiskRead(pageId);
+      bufferpool.prepend(newPage, pageId, disk_sim);
+      Buffer::read_io++;
+    } else {
+      Buffer::buffer_hit++;
+      printf("[READ CACHE HIT | CFLRU] Page & Offset Query: %d, %d. Returned Entry: ...\n", pageId, offset);
+      bufferpool.display(); // Will slowdown and effect Runtime
+    }
+  }
+
+  if (algorithm == 3) { // LRU-WSR
+    buffer_instance->wsrReferPage(pageId, false); //This is set to false as it is a read operation - RGVA
   }
 
   return 1;
@@ -295,9 +315,31 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
     }
 
     if (algorithm == 2) { // CFLRU
-      buffer_instance->cflruReferPage(pageId, true); //This is set to true as it is a write operation - RGVA
+    auto& bufferpool = buffer_instance->bufferpool_LRU;
+    auto& disk_sim = buffer_instance->simulation_disk;
+    
+    Page* cache_page = bufferpool.lookupInBuffer(pageId);
+    if (cache_page == nullptr) {
+      Buffer::buffer_miss++;
+      if (bufferpool.current_page_cnt >= Buffer::max_buffer_size) {
+        buffer_instance->cflruEvictPage(); // Evict pages using CFLRU logic
+      }
+      Page newPage = buffer_instance->simulateDiskRead(pageId);
+      newPage.setDirtyPage(true);
+      bufferpool.prepend(newPage, pageId, disk_sim);
+      Buffer::write_io++;
+    } else {
+      Buffer::buffer_hit++;
+      cache_page->insertEntryIntoPage(offset, new_entry);
+      cache_page->setDirtyPage(true);
+      printf("[WRITE CACHE HIT | CFLRU] Page & Offset Query: %d, %d. WRITTEN & Returned Entry: %s\n", pageId, offset, new_entry.c_str());
+      bufferpool.display(); // Will slowdown and effect Runtime
     }
+  }
 
+    if (algorithm == 3) { // LRU-WSR
+      buffer_instance->wsrReferPage(pageId, true); //This is set to true as it is a write operation - RGVA
+    }
   return 1;
 }
 
@@ -347,4 +389,21 @@ bool Page::isDirtyPage() const
 int Page::getPageID() const 
 {
     return pageId;
+}
+
+void Page::insertEntryIntoPage(int offset, string entry) 
+{
+    if(offset + entry.size() > sizeof(pageContent)) {
+        cerr << "Error: Entry exceeds page size limits." << endl;
+        return;  // Or handle the error as necessary
+    }
+    memcpy(pageContent + offset, entry.c_str(), entry.size());
+}
+
+void Page::setColdFlag(bool flag) {//LRU-WSR Integration
+        this->cold = flag;
+}
+
+bool Page:: isCold() const { //LRU-WSR Integration
+        return this->cold;
 }

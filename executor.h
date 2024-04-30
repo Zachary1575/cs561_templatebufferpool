@@ -17,18 +17,24 @@ namespace bufmanager {
     private:
       int pageId;
       char pageContent[4096];
-      bool dirty;
+      bool dirty; // Dirty Page - CFLRU Integration
+      bool cold; // Cold Page - LRU-WSR Integration
 
     public:
       Page(int pageId); // Page Constructor
 
       char* getPageContent();
-      bool isDirtyPage() const;
+      bool isDirtyPage() const; //CFLRU Integration
       int getPageID() const;
-      void setDirtyPage(bool dirty);
+      void setDirtyPage(bool dirty); //CFLRU Integration
       void printAllPageEntries();
       void insertEntryIntoPage(int offset, string entry);
+      
+      void setColdFlag(bool flag); //LRU-WSR Integration
+      bool isCold() const; //LRU-WSR Integration
+
   };
+
   // ------------------------------------------------ Doubly Linked List & Hashmap for LRU ------------------------------------------------
   // EACH PAGE IS CONSIDERED AS A NODE.
   // Downside of this structure is that it takes lots of memory.
@@ -99,30 +105,31 @@ namespace bufmanager {
       // Adds data to the doubly linked list, O(1) append
       // HOWEVER, this function also evicts if we hit the cap.
       // THIS IS A PAGE LEVEL ADD, A NODE IS A PAGE! (val -> PAGE in DB)
+
       void prepend(T val, int pageId, bool Disk_Simulation) 
       {
           if (current_page_cnt + 1 > page_capacity) { // If we add another page, if we go over count
-            printf("We hit page_capacity at: %d!\n", current_page_cnt);
-            // Then we need to perform LRU eviction
-            // We need to take cache hit rate, cache miss rate, then evict 1- 50% of the total capacity
-            int pages_to_evict = page_capacity * 0.25; // For now lets pretend we evict 25% of our cache (alot!)
-            if (pages_to_evict == 0) {
-              pages_to_evict = 1;
-            }
-            printf("[LRU] We are evicting this number of pages: %d!\n", pages_to_evict);
-            deleteLastXPages(pages_to_evict, Disk_Simulation);
-            current_page_cnt = current_page_cnt - pages_to_evict;
-            algorithm_eviction_count++;
+        printf("We hit page_capacity at: %d!\n", current_page_cnt);
+        // Then we need to perform LRU eviction
+        // We need to take cache hit rate, cache miss rate, then evict 1- 50% of the total capacity
+        int pages_to_evict = page_capacity * 0.25; // For now lets pretend we evict 25% of our cache (alot!)
+        if (pages_to_evict == 0) {
+          pages_to_evict = 1;
+        }
+        printf("[LRU] We are evicting this number of pages: %d!\n", pages_to_evict);
+        deleteLastXPages(pages_to_evict, Disk_Simulation);
+        current_page_cnt = current_page_cnt - pages_to_evict;
+        algorithm_eviction_count++;
           }
 
           // We add the page.
           Node<T>* newNode = new Node<T>(val);
           if (head == nullptr) { // Empty list
-              head = tail = newNode;
+          head = tail = newNode;
           } else {
-              newNode->next = head;
-              head->prev = newNode;
-              head = newNode;
+          newNode->next = head;
+          head->prev = newNode;
+          head = newNode;
           }
           map[pageId] = newNode; // Map<Query (as string), Node Reference>, later this is useful for lookups
           current_page_cnt++;
@@ -259,7 +266,7 @@ namespace bufmanager {
     private:
       Buffer(Simulation_Environment* _env);
       static Buffer* buffer_instance;
-
+      static const int window_size = 10;
 
     public:
       int algorithm;
@@ -277,8 +284,8 @@ namespace bufmanager {
       static int read_io;
       static int write_io;
 
-      void LRU(int x);
-      int LRUWSR();
+      void LRU(int x); 
+      int LRUWSR(); //unused
 
       static int printBuffer();
       static int printStats();
@@ -290,66 +297,138 @@ namespace bufmanager {
       void cflruReferPage(int pageId, bool isWrite) {
     Node<Page>* node = bufferpool_LRU.getPage(pageId);
 
-    if (node == nullptr) {
+    if (node == nullptr) {  // Page miss
         buffer_miss++;
-        std::cout << "Page miss for: " << pageId << std::endl;
+        cout << "[CFLRU] Page miss for: " << pageId << ". Total misses: " << buffer_miss << endl;
+        bufferpool_LRU.display(); // Will slowdown and effect Runtime
 
+        // Check capacity before reading in a new page
         if (bufferpool_LRU.current_page_cnt >= max_buffer_size) {
-            cflruEvictPage(); // Evict pages if the buffer is full
+            cout << "[CFLRU] Buffer full. Evicting pages..." << endl;
+            cflruEvictPage(); 
         }
 
-        if (simulation_disk) {
-            Page newPage = simulateDiskRead(pageId);
-            newPage.setDirtyPage(isWrite);
-            bufferpool_LRU.prepend(newPage, pageId, true);
-            read_io++; // Properly increment Read IO only when actually reading from disk.
-        } else {
-            Page newPage(pageId); // Create a new page in memory without disk I/O
-            newPage.setDirtyPage(isWrite);
-            bufferpool_LRU.prepend(newPage, pageId, false);
-        }
-    } else {
+        // Simulate disk read and prepend new page
+        Page newPage = simulateDiskRead(pageId);
+        newPage.setDirtyPage(isWrite); // Mark dirty if it's a write operation
+        bufferpool_LRU.prepend(newPage, pageId, simulation_disk);
+        bufferpool_LRU.display();
+        if (!isWrite) read_io++; // Increment read I/O if it's a read operation
+    } else {  // Page hit
         buffer_hit++;
-        std::cout << "Buffer hit for page: " << pageId << std::endl;
-        if (isWrite && !node->data.isDirtyPage()) {
+        cout << "[CFLRU] Buffer hit for page: " << pageId << ". Total hits: " << buffer_hit << endl;
+        if (isWrite && !node->data.isDirtyPage() && simulation_disk) {
             node->data.setDirtyPage(true);
-            if (simulation_disk) {
-                // Increment write IO when changing the state of a page to dirty under simulation.
-                write_io++;
-            }
+            cout << "[CFLRU] Page " << pageId << " set to dirty due to write operation." << endl;
         }
-        moveFront(node);
+        moveFront(node); // Move to front to mark as most recently used
     }
 }
-
 
       //******CFLRU METHOD - PAGE EVICTION *****//
 
       void cflruEvictPage() {
-        //Clean-First LRU Logic: Find least recently used clean page and evict it
-        Node<Page>* current = bufferpool_LRU.head;
-        bool leastRecentClean = false;
+        int evictedCount = 0;
+        Node<Page>* current = bufferpool_LRU.tail;
 
-        while (current != nullptr && !leastRecentClean) {
-          if (!current->data.isDirtyPage()) {
-            leastRecentClean = true;
-            //Evict clean page
-            cout << "CFLRU Evicting clean page: " << current->data.getPageID() << endl;
-            removeNode(current);
-          }
-          current = current->next;
+        // First pass: Evict clean pages within the window size limit
+        while (current != nullptr && evictedCount < window_size && !current->data.isDirtyPage()) {
+            Node<Page>* toDelete = current;
+            current = current->prev;
+            if (!toDelete->data.isDirtyPage()) {
+                removeNode(toDelete);  // Custom method to remove a node from DLL and free memory
+                evictedCount++;
+                std::cout << "[CFLRU Eviction] Evicting clean page: " << toDelete->data.getPageID() << std::endl;
+            }
         }
 
-        if (!leastRecentClean && bufferpool_LRU.tail != nullptr) {
-          cout << "CFLRU falling back to evicting the last used page. (LRU)" << endl;
-          if (bufferpool_LRU.tail->data.isDirtyPage() && simulation_disk) {
-            writeBackToDisk(bufferpool_LRU.tail->data);
-            write_io++;
-          }
-          removeNode(bufferpool_LRU.tail);
+        // Second pass: If not enough pages evicted and buffer still full, start evicting least recently used pages
+        if (evictedCount < window_size) {
+            while (current != nullptr && evictedCount < window_size) {
+                Node<Page>* toDelete = current;
+                current = current->prev;
+                removeNode(toDelete);
+                evictedCount++;
+                std::cout << "[CFLRU Eviction] Evicting LRU page: " << toDelete->data.getPageID() << std::endl;
+            }
         }
+    }
+
+
+
+
+      //******LRU-WSR METHOD - PAGE EVICTION *****//
+      void wsrReferPage(int pageId, bool isWrite) {
+        Node<Page>* node = bufferpool_LRU.getPage(pageId);
+
+        if (node == nullptr) { // Page miss - increase the counter
+          buffer_miss++;
+          std::cout << "Page miss for: " << pageId << std::endl;
+
+        if (bufferpool_LRU.current_page_cnt >= max_buffer_size) {
+            wsrEvictPage();
+        }
+
+        Page newPage = simulateDiskRead(pageId);
+        newPage.setDirtyPage(isWrite);
+        bufferpool_LRU.prepend(newPage, pageId, simulation_disk);
+
+        if (!isWrite && simulation_disk) {
+            read_io++; // Only when we simulate on disk, read_io is incremented for read operations
+        }
+
+        if (isWrite && simulation_disk) {
+            write_io++; // Only when we simulate on disk, write_io is incremented for write operations
+        }
+        } else { // Page hit - increase the counter
+          buffer_hit++;
+          std::cout << "Buffer hit for page: " << pageId << std::endl;
+          if (isWrite && !node->data.isDirtyPage()) {
+              node->data.setDirtyPage(true);
+              if (simulation_disk) {
+                  // write_io only increases when making a clean page dirty involves disk access
+                  write_io++; 
+              }
+          }
+          moveFront(node);
       }
+  }
 
+      void wsrEvictPage() {
+        Node<Page>* current = bufferpool_LRU.tail;
+        bool foundEvictable = false;
+
+        // First pass: Try to find a non-cold, dirty page to evict
+        while (current != nullptr && !foundEvictable) {
+            if (!current->data.isCold() && current->data.isDirtyPage()) {
+                std::cout << "[LRU-WSR Eviction] Evicting dirty, non-cold page: " << current->data.getPageID() << std::endl;
+                removeNode(current);
+                foundEvictable = true;
+            }
+            current = current->prev;
+        }
+
+        // Second pass: If no suitable page found, reset cold flags and evict the least recently used page
+        if (!foundEvictable) {
+            current = bufferpool_LRU.tail;
+            while (current != nullptr) {
+                if (current->data.isCold()) {
+                    current->data.setColdFlag(false);  // Reset cold flag
+                }
+                current = current->prev;
+            }
+            // Evict the least recently used page
+            if (bufferpool_LRU.tail != nullptr) {
+                std::cout << "[LRU-WSR Eviction] Evicting the least recently used page: " << bufferpool_LRU.tail->data.getPageID() << std::endl;
+                removeNode(bufferpool_LRU.tail);
+            }
+        }
+    }
+
+
+
+
+      //******HELPER FUNCTION - REMOVE NODE *****//
       void removeNode(Node<Page>* node) {
         if (node->prev) node->prev->next = node->next;
         if (node->next) node->next->prev = node->prev;
@@ -360,10 +439,11 @@ namespace bufmanager {
         delete node;
     }
 
+    //******HELPER FUNCTION - WRITE BACK TO DISK *****//
       void writeBackToDisk(Page& page) {
         cout << "[DEBUG] Writing back dirty page to disk: Page ID: " << page.getPageID() << endl;
 
-        // Define the path to the simulated disk file
+        // This is the path to the simulated disk file, set up the fsstream object
         string datFilePath = "./rawdata_database.dat";
         fstream file(datFilePath, ios::in | ios::out | ios::binary);
 
@@ -373,7 +453,7 @@ namespace bufmanager {
         }
 
         // Calculate the byte offset in the file where this page's data should be written
-        int byteStart = page.getPageID() * 4096; // Assuming 4KB page size
+        int byteStart = page.getPageID() * 4096; // 4KB page
 
         // Seek to the correct position in the file
         file.seekp(byteStart, ios::beg);
@@ -394,7 +474,7 @@ namespace bufmanager {
 
 
 
-      //******CFLRU HELPER METHOD - MOVE PAGE TO FRONT *****//
+      //******HELPER FUNCTION - MOVE PAGE TO FRONT *****//
       void moveFront(Node<Page>* node) {
         if (node != bufferpool_LRU.head) { //If it is not the first page in the buffer
           if (node->prev) node->prev->next = node->next;
@@ -410,7 +490,7 @@ namespace bufmanager {
         }
       }
 
-      //******CFLRU METHOD - SIMULATE DISK READ - borrowed from Zach :) *****//
+      //******HELPER FUNCTION - SIMULATE DISK READ - borrowed from Zach :) *****//
       Page simulateDiskRead(int pageId) {
         std::string datFilePath = "./rawdata_database.dat";
         std::fstream file(datFilePath, std::ios::in | std::ios::out | std::ios::binary);
@@ -436,6 +516,7 @@ namespace bufmanager {
         }
         file.close();
         std::cout << "Disk read simulation succeeded for page: " << pageId << std::endl; // Debug print - RGVA
+        bufferpool_LRU.display();
         return bufferPage;
       }
   };
