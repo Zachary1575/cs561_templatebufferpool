@@ -119,7 +119,6 @@ namespace bufmanager {
             }
             printf("[LRU] We are evicting this number of pages: %d!\n", pages_to_evict);
             deleteLastXPages(pages_to_evict, Disk_Simulation);
-            current_page_cnt = current_page_cnt - pages_to_evict;
             algorithm_eviction_count++;
           }
 
