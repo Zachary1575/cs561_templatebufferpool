@@ -77,7 +77,7 @@ int Buffer::LRUWSR()
 }
 
 // Statistics with Simulation Environments
-int Buffer::printStats()
+int Buffer::printStats(int elapsed_time)
 {
   Simulation_Environment* _env = Simulation_Environment::getInstance();
   cout << "\n\n********************** Overall Statistics **********************" << endl;
@@ -88,7 +88,7 @@ int Buffer::printStats()
   cout << "DISK SIMULATION: " << (_env->simulation_on_disk ? "Yes" : "No (Disk & Write IO should be '0')") << endl;
   cout << "Read IO: " << read_io << endl;
   cout << "Write IO: " << write_io << endl; 
-  cout << "Global Clock: " << endl;
+  cout << "Global Clock: " << elapsed_time << "ms" << endl;
   cout << "****************************************************************" << endl;
   return 0;
 }
@@ -118,6 +118,8 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
   if (algorithm == 1) { // LRU
     auto& bufferpool = buffer_instance->bufferpool_LRU;
     auto& disk_sim = buffer_instance->simulation_disk;
+    bufferpool.instructions_seen++;
+    printf("Total Istructions Seen is: %d!\n", bufferpool.instructions_seen);
     
     // Search in Hashmap to see if that pageID is made...
     Page* cache_page = bufferpool.lookupInBuffer(pageId);
@@ -153,14 +155,14 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
           return 1;
         }
         file.close();
-        bufferpool.prepend(bufferPage, pageId, disk_sim); // Insert the page into the Buffer pool
+        bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
         Buffer::read_io++;
         return 1;
       } 
         else // NOT DISK SIMULATION
       {
         Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
-        bufferpool.prepend(x, pageId, disk_sim); // Insert the page into the Buffer pool
+        bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
         // printf("[DEBUG] "); // Debug
         //bufferpool.display(); // Will slowdown and effect Runtime
       }
@@ -200,6 +202,8 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
     if (algorithm == 1) { // LRU
       auto& bufferpool = buffer_instance->bufferpool_LRU;
       auto& disk_sim = buffer_instance->simulation_disk;
+      bufferpool.instructions_seen++;
+        printf("Total Istructions Seen is: %d!\n", bufferpool.instructions_seen);
       
       // Search in Hashmap to see if that pageID is made...
       Page* cache_page = bufferpool.lookupInBuffer(pageId);
@@ -246,7 +250,7 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
             entry_cnter++;
           }
           bufferPage.setDirtyPage(true); // Set the page is dirty as it doesnt reflect the actual database data
-          bufferpool.prepend(bufferPage, pageId, disk_sim); // Insert the page into the Buffer pool
+          bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
           Buffer::write_io++;
           return 1;
         } 
@@ -255,7 +259,7 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
           Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
           // We then write in it... (pretend it does here)
           x.setDirtyPage(true); // Set the page to be dirty
-          bufferpool.prepend(x, pageId, disk_sim); // Insert the page into the Buffer pool
+          bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
           printf("[DEBUG] "); // Debug
           bufferpool.display(); // Will slowdown and effect Runtime
         }

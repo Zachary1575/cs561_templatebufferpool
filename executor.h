@@ -60,8 +60,9 @@ namespace bufmanager {
       int current_page_cnt;
       int page_capacity;
       int algorithm_eviction_count;
+      int instructions_seen;
 
-      DoublyLinkedList_Hashmap_LRU_Cache(int cap) : head(nullptr), tail(nullptr), current_page_cnt(0), page_capacity(cap), algorithm_eviction_count(0) {}
+      DoublyLinkedList_Hashmap_LRU_Cache(int cap) : head(nullptr), tail(nullptr), current_page_cnt(0), page_capacity(cap), algorithm_eviction_count(0), instructions_seen(0) {}
       ~DoublyLinkedList_Hashmap_LRU_Cache() { clear();}
 
       void clear() {
@@ -99,14 +100,21 @@ namespace bufmanager {
       // Adds data to the doubly linked list, O(1) append
       // HOWEVER, this function also evicts if we hit the cap.
       // THIS IS A PAGE LEVEL ADD, A NODE IS A PAGE! (val -> PAGE in DB)
-      void prepend(T val, int pageId, bool Disk_Simulation) 
+      void prepend(T val, int pageId, bool Disk_Simulation, int bufferMiss) 
       {
           if (current_page_cnt + 1 > page_capacity) { // If we add another page, if we go over count
             printf("We hit page_capacity at: %d!\n", current_page_cnt);
-            // Then we need to perform LRU eviction
-            // We need to take cache hit rate, cache miss rate, then evict 1- 50% of the total capacity
-            int pages_to_evict = page_capacity * 0.25; // For now lets pretend we evict 25% of our cache (alot!)
-            if (pages_to_evict == 0) {
+            printf("Total Istructions Seen is: %d!\n", instructions_seen);
+
+            // Dynamic way to calculate eviction amount. If our cache is in a locality/useful for that part of computation, we have low eviction rate
+            const double E_MIN = 0.01;  // Minimum eviction rate (1%)
+            const double E_MAX = 0.25;  // Maximum eviction rate (25%)
+            const double SCALE_FACTOR = 0.25;  // Scaling factor
+            double missRate = (bufferMiss/instructions_seen); // Miss rate Buffer Miss / Instructions Seened so far...
+            double scaledEvictionRate = SCALE_FACTOR * missRate;
+            double evictionRate = std::max(E_MIN, std::min(E_MAX, scaledEvictionRate)); // Capped from 1% - 25% Eviction 
+            int pages_to_evict = page_capacity * evictionRate; // Apply our eviction rate to our page capacity
+            if (pages_to_evict == 0) { // Guard for 0 page evictions
               pages_to_evict = 1;
             }
             printf("[LRU] We are evicting this number of pages: %d!\n", pages_to_evict);
@@ -185,7 +193,7 @@ namespace bufmanager {
             int pageId = nodeToDelete->data.getPageID(); // Assuming Node<T> stores data that has getPageID()
 
             if (Disk_Simulation && (nodeToDelete->data.isDirtyPage())) {
-              cout << "[DEBUG] Flushing Dirty Page to DB! Page ID: " << pageId << endl;
+              // cout << "[DEBUG] Flushing Dirty Page to DB! Page ID: " << pageId << endl;
               // We index based off of pageID and then write the page in the .dat file.
               string datFilePath = "./rawdata_database.dat";
               std::fstream file(datFilePath, std::ios::in | std::ios::out | std::ios::binary);
@@ -280,7 +288,7 @@ namespace bufmanager {
       int LRUWSR();
 
       static int printBuffer();
-      static int printStats();
+      static int printStats(int elapsed_time);
       static int printBufferStats(Buffer* buffer_instance);
   };
 
