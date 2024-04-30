@@ -52,10 +52,7 @@ Buffer::Buffer(Simulation_Environment *_env)
 // Change Made - buffer size shoould correctly initialize for all algorithms used - RGVA
 int Buffer::determineBufferSize(Simulation_Environment* _env) 
 {
-  //if (_env->algorithm == 1) {
-      return _env->buffer_size_in_pages;
-  //} else {
-      //return 0;  // Example: default or minimum size for other algorithms
+  return _env->buffer_size_in_pages;
 }
 
 
@@ -68,13 +65,6 @@ Buffer *Buffer::getBufferInstance(Simulation_Environment *_env)
     std::cout << "The address of Buffer is: " << buffer_instance << std::endl;
     cout << "****************************************************************" << endl;
   return buffer_instance;
-}
-
-// ==== Eviction Algorithms ====
-int Buffer::LRUWSR()
-{
-  // Implement LRUWSR
-  return -1;
 }
 
 // Statistics with Simulation Environments
@@ -95,7 +85,6 @@ int Buffer::printStats()
 }
 
 // Print specific
-
 int Buffer::printBufferStats(Buffer* buffer_instance)
 {
   auto& bufferpool = buffer_instance->bufferpool_LRU;
@@ -107,18 +96,15 @@ int Buffer::printBufferStats(Buffer* buffer_instance)
 }
 
 // ---------------- Workload Executer ---------------- 
-
-int WorkloadExecutor::search(Buffer* buffer_instance, int pageId)
-{
-  return -1; // Dunno if I need this
-}
-
 int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int algorithm)
 {
   printf("\nRead Instruction Issued: (pageID~%d, offset~%d, algorithm~%d)\n", pageId, offset, algorithm);
   if (algorithm == 1) { // LRU
     auto& bufferpool = buffer_instance->bufferpool_LRU;
     auto& disk_sim = buffer_instance->simulation_disk;
+
+    bufferpool.instructions_seen++;
+    printf("Total Istructions Seen is: %d!\n", bufferpool.instructions_seen);
     
     // Search in Hashmap to see if that pageID is made...
     Page* cache_page = bufferpool.lookupInBuffer(pageId);
@@ -154,14 +140,14 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
           return 1;
         }
         file.close();
-        bufferpool.prepend(bufferPage, pageId, disk_sim); // Insert the page into the Buffer pool
+        bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
         Buffer::read_io++;
         return 1;
       } 
         else // NOT DISK SIMULATION
       {
         Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
-        bufferpool.prepend(x, pageId, disk_sim); // Insert the page into the Buffer pool
+        bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
         //printf("[DEBUG] "); // Debug
         //bufferpool.display(); // Will slowdown and effect Runtime
       }
@@ -195,20 +181,40 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
   if (algorithm == 2) { // CFLRU
     auto& bufferpool = buffer_instance->bufferpool_LRU;
     auto& disk_sim = buffer_instance->simulation_disk;
+
+    bufferpool.instructions_seen++;
+    printf("Total Istructions Seen is: %d!\n", bufferpool.instructions_seen);
     
     Page* cache_page = bufferpool.lookupInBuffer(pageId);
     if (cache_page == nullptr) {
       Buffer::buffer_miss++;
+
       if (bufferpool.current_page_cnt >= Buffer::max_buffer_size) {
         buffer_instance->cflruEvictPage(); // Evict pages using CFLRU logic
       }
-      Page newPage = buffer_instance->simulateDiskRead(pageId);
-      bufferpool.prepend(newPage, pageId, disk_sim);
-      Buffer::read_io++;
+      if (disk_sim) {
+        Page newPage = buffer_instance->simulateDiskRead(pageId);
+        bufferpool.prepend(newPage, pageId, disk_sim, Buffer::buffer_miss);
+        Buffer::read_io++;
+      } else {
+        Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
+        bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
+      }      
     } else {
       Buffer::buffer_hit++;
-      printf("[READ CACHE HIT | CFLRU] Page & Offset Query: %d, %d. Returned Entry: ...\n", pageId, offset);
-      bufferpool.display(); // Will slowdown and effect Runtime
+      if (disk_sim) {
+        Page hitBufferPage = bufferpool.getPage(pageId)->data;
+        char* buffer = hitBufferPage.getPageContent();
+        auto& entry_size = buffer_instance->entry_size;
+        string entry = "";
+        for (int i = offset; i < offset + entry_size; i++) // Runtime is O(k) where k is the size of the entry.
+        {
+          entry = entry + buffer[i];
+        }
+        printf("[READ CACHE HIT | CFLRU | DISK SIMULATION] Page & Offset Query: %d, %d. Returned Entry: ...\n", pageId, offset);
+      } else {
+        printf("[READ CACHE HIT | CFLRU | NOT DISK SIMULATION] Getting Entry and Pretending to Return Data to Satisfy Query: %d, %d.\n", pageId, offset);
+      }
     }
   }
 
@@ -225,6 +231,9 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
     if (algorithm == 1) { // LRU
       auto& bufferpool = buffer_instance->bufferpool_LRU;
       auto& disk_sim = buffer_instance->simulation_disk;
+
+      bufferpool.instructions_seen++;
+      printf("Total Istructions Seen is: %d!\n", bufferpool.instructions_seen);
       
       // Search in Hashmap to see if that pageID is made...
       Page* cache_page = bufferpool.lookupInBuffer(pageId);
@@ -271,7 +280,7 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
             entry_cnter++;
           }
           bufferPage.setDirtyPage(true); // Set the page is dirty as it doesnt reflect the actual database data
-          bufferpool.prepend(bufferPage, pageId, disk_sim); // Insert the page into the Buffer pool
+          bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
           Buffer::write_io++;
           return 1;
         } 
@@ -280,7 +289,7 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
           Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
           // We then write in it... (pretend it does here)
           x.setDirtyPage(true); // Set the page to be dirty
-          bufferpool.prepend(x, pageId, disk_sim); // Insert the page into the Buffer pool
+          bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
           printf("[DEBUG] "); // Debug
           bufferpool.display(); // Will slowdown and effect Runtime
         }
@@ -308,34 +317,49 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
           else // NOT DISK SIMULATION
         { 
           printf("[WRITE CACHE HIT | NOT DISK SIMULATION] Getting Entry and Pretending to WRITE & Return Data to Satisfy Query: %d, %d.\n", pageId, offset);
-          printf("[DEBUG] "); // Debug
-          bufferpool.display(); // Will slowdown and effect Runtime
+          // printf("[DEBUG] "); // Debug
+          // bufferpool.display(); // Will slowdown and effect Runtime
         }
       }
     }
 
     if (algorithm == 2) { // CFLRU
-    auto& bufferpool = buffer_instance->bufferpool_LRU;
-    auto& disk_sim = buffer_instance->simulation_disk;
-    
-    Page* cache_page = bufferpool.lookupInBuffer(pageId);
-    if (cache_page == nullptr) {
-      Buffer::buffer_miss++;
-      if (bufferpool.current_page_cnt >= Buffer::max_buffer_size) {
-        buffer_instance->cflruEvictPage(); // Evict pages using CFLRU logic
+      auto& bufferpool = buffer_instance->bufferpool_LRU;
+      auto& disk_sim = buffer_instance->simulation_disk;
+
+      bufferpool.instructions_seen++;
+      printf("Total Istructions Seen is: %d!\n", bufferpool.instructions_seen);
+      
+      Page* cache_page = bufferpool.lookupInBuffer(pageId);
+      if (cache_page == nullptr) {
+        Buffer::buffer_miss++;
+        if (bufferpool.current_page_cnt >= bufferpool.page_capacity) {
+          buffer_instance->cflruEvictPage(); // Evict pages using CFLRU logic
+        }
+
+        if (disk_sim) {
+          Page newPage = buffer_instance->simulateDiskRead(pageId);
+          newPage.setDirtyPage(true);
+          bufferpool.prepend(newPage, pageId, disk_sim, Buffer::buffer_miss);
+          Buffer::write_io++;
+        } else {
+          Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
+          // We then write in it... (pretend it does here)
+          x.setDirtyPage(true); // Set the page to be dirty
+          bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
+        }
+      } else {
+        Buffer::buffer_hit++;
+
+        if (disk_sim) {
+          cache_page->insertEntryIntoPage(offset, new_entry);
+          cache_page->setDirtyPage(true);
+          printf("[WRITE CACHE HIT | CFLRU | DISK SIMULATION] Page & Offset Query: %d, %d.\n", pageId, offset);
+        } else {
+          printf("[WRITE CACHE HIT | CFLRU | NOT DISK SIMULATION] Page & Offset Query: %d, %d. WRITTEN & Returned Entry: %s\n", pageId, offset, new_entry.c_str());
+        }
       }
-      Page newPage = buffer_instance->simulateDiskRead(pageId);
-      newPage.setDirtyPage(true);
-      bufferpool.prepend(newPage, pageId, disk_sim);
-      Buffer::write_io++;
-    } else {
-      Buffer::buffer_hit++;
-      cache_page->insertEntryIntoPage(offset, new_entry);
-      cache_page->setDirtyPage(true);
-      printf("[WRITE CACHE HIT | CFLRU] Page & Offset Query: %d, %d. WRITTEN & Returned Entry: %s\n", pageId, offset, new_entry.c_str());
-      bufferpool.display(); // Will slowdown and effect Runtime
     }
-  }
 
     if (algorithm == 3) { // LRU-WSR
       buffer_instance->wsrReferPage(pageId, true); //This is set to true as it is a write operation - RGVA
@@ -345,8 +369,7 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
 
 int WorkloadExecutor::unpin(Buffer* buffer_instance, int pageId)
 {
-  // This is optional I think?
-  return -1;
+  return -1;   // This is optional I think?
 }
 
 
