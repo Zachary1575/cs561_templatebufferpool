@@ -22,6 +22,7 @@ void printParameters(Simulation_Environment* _env);
 int runWorkload(Simulation_Environment* _env);
 
 std::chrono::steady_clock::time_point globalStart; // Global start point
+int elapsed_time;
 
 int main(int argc, char *argvx[])
 {
@@ -47,7 +48,7 @@ int main(int argc, char *argvx[])
   }
 
   // Print Different Statistics
-  Buffer::printStats();
+  Buffer::printStats(elapsed_time);
   return 0;
 }
 
@@ -92,6 +93,7 @@ int runWorkload(Simulation_Environment* _env) {
   auto now = std::chrono::steady_clock::now();
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - globalStart).count();
   std::cout << "Elapsed time: " << elapsed << " ms" << std::endl;
+  elapsed_time = elapsed;
 
   Buffer::printBufferStats(buffer_instance);
 

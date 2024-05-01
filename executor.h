@@ -23,15 +23,13 @@ namespace bufmanager {
       Page(int pageId); // Page Constructor
 
       char* getPageContent();
+      bool isCold() const; //LRU-WSR Integration
       bool isDirtyPage() const; //CFLRU Integration
       int getPageID() const;
+      void setColdFlag(bool flag); //LRU-WSR Integration
       void setDirtyPage(bool dirty); //CFLRU Integration
       void printAllPageEntries();
       void insertEntryIntoPage(int offset, string entry);
-      
-      void setColdFlag(bool flag); //LRU-WSR Integration
-      bool isCold() const; //LRU-WSR Integration
-
   };
 
   // ------------------------------------------------ Doubly Linked List & Hashmap for LRU ------------------------------------------------
@@ -106,8 +104,7 @@ namespace bufmanager {
       // Adds data to the doubly linked list, O(1) append
       // HOWEVER, this function also evicts if we hit the cap.
       // THIS IS A PAGE LEVEL ADD, A NODE IS A PAGE! (val -> PAGE in DB)
-
-      void prepend(T val, int pageId, bool Disk_Simulation, int bufferMiss) 
+      void prepend(T val, int pageId, bool Disk_Simulation, int bufferMiss, int algorithm) 
       {
           if (current_page_cnt + 1 > page_capacity) { // If we add another page, if we go over count
             printf("We hit page_capacity at: %d!\n", current_page_cnt);
@@ -124,8 +121,13 @@ namespace bufmanager {
             if (pages_to_evict == 0) { // Guard for 0 page evictions
               pages_to_evict = 1;
             }
-            printf("[LRU] We are evicting this number of pages: %d!\n", pages_to_evict);
-            deleteLastXPages(pages_to_evict, Disk_Simulation);
+            if (algorithm == 3) {
+               printf("[LRU-WSR] We are evicting this number of pages: %d!\n", pages_to_evict);
+               deleteLastXPagesWSR(pages_to_evict, Disk_Simulation);
+            } else {
+              printf("[LRU] We are evicting this number of pages: %d!\n", pages_to_evict);
+              deleteLastXPages(pages_to_evict, Disk_Simulation);
+            }
             algorithm_eviction_count++;
           }
 
@@ -184,10 +186,16 @@ namespace bufmanager {
               tail = node;
           }
 
+          // For WSR, "a cold-flag of dirty page is cleared when the page is referenced again" ~ The paper
+          if (node->data.isDirtyPage() && node->data.isCold()) {
+            node->data.setColdFlag(false);
+          }
+
           return bufferPage;
         }
       }
 
+      //******LRU METHOD - PAGE EVICTION *****//
       void deleteLastXPages(int x, bool Disk_Simulation) {
         if (x <= 0) { // Sanity Check & Safety: Nothing to delete if x is zero or negative
             return; 
@@ -256,52 +264,119 @@ namespace bufmanager {
         }
       }
 
-      // Utility Functions
-      // This function displays the sequence of pages in the node
-      void display() const {
-        Node<T>* currentNode = head;
-        while (currentNode != nullptr) {
-            std::cout << currentNode->data.getPageID() << " " << "->" << " ";
-            currentNode = currentNode->next;
+      //******WSR METHOD - PAGE EVICTION *****//
+      void deleteLastXPagesWSR(int x, bool Disk_Simulation) {
+        if (x <= 0) { // Sanity Check & Safety: Nothing to delete if x is zero or negative
+            return; 
         }
-        std::cout << "null" << std::endl;
+
+        int count = 0;
+        while (tail != nullptr && count < x) {
+
+          Node<T>* nodeToDelete = tail;
+            int pageId = nodeToDelete->data.getPageID(); // Assuming Node<T> stores data that has getPageID()
+
+            // Not-Cold dirty page mentioned in the paper
+            if ((nodeToDelete->data.isDirtyPage()) && (!nodeToDelete->data.isCold())) {
+              Node<Page>* node = getPage(pageId); // Lookup the Buffer Page
+              Page* bufferPage = &(node->data);
+              node->data.setColdFlag(true); // Set the victim to be cold
+
+              // Then we need to rearrange the node as it was just accessed
+              if (node == head) { // Node is already at the front, no need to move
+                continue;
+              }
+              // Detach node from its current position
+              if (node->prev) { 
+                  node->prev->next = node->next;
+              }
+              if (node->next) {
+                  node->next->prev = node->prev;
+              }
+              if (node == tail) { // If node is the tail, update the tail
+                  tail = node->prev;
+              }
+
+              // Attach node at the front of the list
+              node->next = head;
+              node->prev = nullptr;
+              if (head) {
+                  head->prev = node;
+              }
+              head = node;
+
+              // If the list was empty (shouldn't be the case here, but good to check)
+              if (tail == nullptr) {
+                  tail = node;
+              }
+              // printf("[LRU-WSR] Set Dirty Page to Cold. Moved %d Page ID to the front.\n", pageId);
+              continue; // We find the next victim
+            }
+
+
+            // Cold-Dirty page
+            if (Disk_Simulation && (nodeToDelete->data.isDirtyPage()) && (nodeToDelete->data.isCold())) {
+              // cout << "[DEBUG] Flushing Dirty Page to DB! Page ID: " << pageId << endl;
+              // We index based off of pageID and then write the page in the .dat file.
+              string datFilePath = "./rawdata_database.dat";
+              std::fstream file(datFilePath, std::ios::in | std::ios::out | std::ios::binary);
+              if (!file) 
+              {
+                std::cerr << "Unable to open file." << std::endl;
+                return;
+              }
+              int byteStart = pageId * 4096; // 4KB page
+              file.seekg(byteStart, std::ios::beg);
+
+              if (!file) 
+              {
+                  std::cerr << "Seek failed. Check if the position is beyond the file size." << std::endl;
+                  file.close();
+                  return;
+              }
+
+              char* buffer = nodeToDelete->data.getPageContent();
+              for (int i = 0; i < 4096; ++i) { // 4KB of 4096 bytes
+                  if (buffer[i] != '0') {  // Write only non-zero bytes
+                      // Move the file position pointer to the correct position for writing
+                      file.seekp(byteStart + i, std::ios::beg);
+                      if (!file) {
+                          std::cerr << "Seek failed when trying to write." << std::endl;
+                          file.close();
+                          return;
+                      }
+
+                      // Write the byte back to the file
+                      file.write(&buffer[i], 1);
+                      if (!file) {
+                          std::cerr << "Write failed." << std::endl;
+                          file.close();
+                          return;
+                      }
+                  }
+              }
+
+              // Close the file
+              file.close();
+            }
+
+            // Regular Deletion Process
+            // For Clean Pages (as well as cold-dirty pages after flushing)
+            map.erase(pageId); // Delete the hashmap entry
+
+            tail = tail->prev;
+            if (tail != nullptr) {
+                tail->next = nullptr;
+            } else {
+                head = nullptr; // If tail is nullptr now, it means we've deleted the last node, hence list is empty
+            }
+            delete nodeToDelete; // Free the memory allocated to the node
+            count++;
+            current_page_cnt--;
+        }
       }
 
-      //**************************CFLRU METHOD - PAGE REFERENCE *************************//
-      // Added Disk I/O Operations
-
-      // void cflruReferPage(int pageId, bool isWrite) {
-      //   Node<Page>* node = getPage(pageId);
-
-      //   if (node == nullptr) {  // Page miss
-      //       buffer_miss++;
-      //       cout << "[CFLRU] Page miss for: " << pageId << ". Total misses: " << buffer_miss << endl;
-
-      //       // Check capacity before reading in a new page
-      //       if (bufferpool_LRU.current_page_cnt >= max_buffer_size) {
-      //           cout << "[CFLRU] Buffer full. Evicting pages..." << endl;
-      //           cflruEvictPage(); 
-      //       }
-
-      //       // Simulate disk read and prepend new page
-      //       Page newPage = simulateDiskRead(pageId);
-      //       newPage.setDirtyPage(isWrite); // Mark dirty if it's a write operation
-      //       bufferpool_LRU.prepend(newPage, pageId, simulation_disk, Buffer::buffer_miss);
-      //       bufferpool_LRU.display();
-      //       if (!isWrite) read_io++; // Increment read I/O if it's a read operation
-      //   } else {  // Page hit
-      //       buffer_hit++;
-      //       cout << "[CFLRU] Buffer hit for page: " << pageId << ". Total hits: " << buffer_hit << endl;
-      //       if (isWrite && !node->data.isDirtyPage() && simulation_disk) {
-      //           node->data.setDirtyPage(true);
-      //           cout << "[CFLRU] Page " << pageId << " set to dirty due to write operation." << endl;
-      //       }
-      //       moveFront(node); // Move to front to mark as most recently used
-      //   }
-      // }
-
       //******CFLRU METHOD - PAGE EVICTION *****//
-
       int cflruEvictPage(bool Disk_Simulation, int bufferMiss) {
         algorithm_eviction_count++;
         int evictedCount = 0;
@@ -384,6 +459,17 @@ namespace bufmanager {
         std::cout << "Disk read simulation succeeded for page: " << pageId << std::endl; // Debug print - RGVA
         return bufferPage;
       }
+
+      // Utility Functions
+      // This function displays the sequence of pages in the node
+      void display() const {
+        Node<T>* currentNode = head;
+        while (currentNode != nullptr) {
+            std::cout << currentNode->data.getPageID() << " " << "->" << " ";
+            currentNode = currentNode->next;
+        }
+        std::cout << "null" << std::endl;
+      }
   };
 
   // --------------------------------------------------------------------------------------------------------------------
@@ -412,7 +498,7 @@ namespace bufmanager {
       int LRUWSR(); //unused
 
       static int printBuffer();
-      static int printStats();
+      static int printStats(int elapsed_time);
       static int printBufferStats(Buffer* buffer_instance);
   };
 

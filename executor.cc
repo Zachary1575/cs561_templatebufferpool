@@ -68,7 +68,7 @@ Buffer *Buffer::getBufferInstance(Simulation_Environment *_env)
 }
 
 // Statistics with Simulation Environments
-int Buffer::printStats()
+int Buffer::printStats(int elapsed_time)
 {
   Simulation_Environment* _env = Simulation_Environment::getInstance();
   cout << "\n\n********************** Overall Statistics **********************" << endl;
@@ -79,7 +79,7 @@ int Buffer::printStats()
   cout << "DISK SIMULATION: " << (_env->simulation_on_disk ? "Yes" : "No (Disk & Write IO should be '0')") << endl;
   cout << "Read IO: " << read_io << endl;
   cout << "Write IO: " << write_io << endl; 
-  cout << "Global Clock: " << endl;
+  cout << "Global Clock: " << elapsed_time << "ms" << endl;
   cout << "****************************************************************" << endl;
   return 0;
 }
@@ -140,14 +140,14 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
           return 1;
         }
         file.close();
-        bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
+        bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
         Buffer::read_io++;
         return 1;
       } 
         else // NOT DISK SIMULATION
       {
         Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
-        bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
+        bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
         //printf("[DEBUG] "); // Debug
         //bufferpool.display(); // Will slowdown and effect Runtime
       }
@@ -195,11 +195,11 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
       }
       if (disk_sim) {
         Page newPage = bufferpool.simulateDiskRead(pageId);
-        bufferpool.prepend(newPage, pageId, disk_sim, Buffer::buffer_miss);
+        bufferpool.prepend(newPage, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm);
         Buffer::read_io++;
       } else {
         Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
-        bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
+        bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
       }      
     } else {
       Buffer::buffer_hit++;
@@ -220,7 +220,82 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
   }
 
   if (algorithm == 3) { // LRU-WSR
-    //buffer_instance->wsrReferPage(pageId, false); //This is set to false as it is a read operation - RGVA
+    auto& bufferpool = buffer_instance->bufferpool_LRU;
+    auto& disk_sim = buffer_instance->simulation_disk;
+
+    bufferpool.instructions_seen++;
+    printf("Total Istructions Seen is: %d!\n", bufferpool.instructions_seen);
+    
+    // Search in Hashmap to see if that pageID is made...
+    Page* cache_page = bufferpool.lookupInBuffer(pageId);
+    if (cache_page == nullptr) // If we yield no such page in the Bufferpool
+    {
+      Buffer::buffer_miss++; // Buffer MISS
+      if (disk_sim) // DISK SIMULATION
+      {
+        string datFilePath = "./rawdata_database.dat";
+        std::fstream file(datFilePath, std::ios::in | std::ios::out | std::ios::binary);
+        if (!file) 
+        {
+          std::cerr << "Unable to open file." << std::endl;
+          return 1;
+        }
+        int byteStart = pageId * 4096; // 4KB page
+        file.seekg(byteStart, std::ios::beg);
+
+        if (!file) 
+        {
+            std::cerr << "Seek failed. Check if the position is beyond the file size." << std::endl;
+            file.close();
+            return 1;
+        }
+        Page bufferPage = Page(pageId);
+
+        file.read(bufferPage.getPageContent(), 4096); // Read the database entries into a buffer page, 4096 because of page size
+        // bufferPage.printAllPageEntries(); // For Debug
+
+        if (!file) {
+          std::cerr << "Read failed. Check if there are enough bytes left in the file." << std::endl;
+          file.close();
+          return 1;
+        }
+        file.close();
+        bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
+        Buffer::read_io++;
+        return 1;
+      } 
+        else // NOT DISK SIMULATION
+      {
+        Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
+        bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
+        //printf("[DEBUG] "); // Debug
+        //bufferpool.display(); // Will slowdown and effect Runtime
+      }
+      return 1;
+    } 
+      else 
+    {
+      Buffer::buffer_hit++; // Buffer HIT
+      if (disk_sim) // DISK SIMULATION
+      {
+        Page hitBufferPage = bufferpool.getPage(pageId)->data;
+        char* buffer = hitBufferPage.getPageContent();
+        auto& entry_size = buffer_instance->entry_size;
+        string entry = "";
+        for (int i = offset; i < offset + entry_size; i++) // Runtime is O(k) where k is the size of the entry.
+        {
+          entry = entry + buffer[i];
+        }
+        printf("[READ CACHE HIT | DISK SIMULATION] Page & Offset Query: %d, %d. Returned Entry: %s\n", pageId, offset, entry.c_str());
+        return 1;
+      } 
+        else // NOT DISK SIMULATION
+      { 
+        printf("[READ CACHE HIT | NOT DISK SIMULATION] Getting Entry and Pretending to Return Data to Satisfy Query: %d, %d.\n", pageId, offset);
+        //printf("[DEBUG] "); // Debug
+        //bufferpool.display(); // Will slowdown and effect Runtime
+      }
+    }
   }
 
   return 1;
@@ -281,7 +356,7 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
             entry_cnter++;
           }
           bufferPage.setDirtyPage(true); // Set the page is dirty as it doesnt reflect the actual database data
-          bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
+          bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
           Buffer::write_io++;
           return 1;
         } 
@@ -290,7 +365,7 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
           Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
           // We then write in it... (pretend it does here)
           x.setDirtyPage(true); // Set the page to be dirty
-          bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
+          bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
           printf("[DEBUG] "); // Debug
           bufferpool.display(); // Will slowdown and effect Runtime
         }
@@ -342,13 +417,13 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
         if (disk_sim) {
           Page newPage = bufferpool.simulateDiskRead(pageId);
           newPage.setDirtyPage(true);
-          bufferpool.prepend(newPage, pageId, disk_sim, Buffer::buffer_miss);
+          bufferpool.prepend(newPage, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm);
           Buffer::write_io++;
         } else {
           Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
           // We then write in it... (pretend it does here)
           x.setDirtyPage(true); // Set the page to be dirty
-          bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss); // Insert the page into the Buffer pool
+          bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
         }
       } else {
         Buffer::buffer_hit++;
@@ -369,23 +444,91 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
 
       bufferpool.instructions_seen++;
       printf("Total Istructions Seen is: %d!\n", bufferpool.instructions_seen);
+      
+      // Search in Hashmap to see if that pageID is made...
       Page* cache_page = bufferpool.lookupInBuffer(pageId);
-      if (cache_page == nullptr) {
-        Buffer::buffer_miss++;
+      if (cache_page == nullptr) // If we yield no such page in the Bufferpool
+      {
+        Buffer::buffer_miss++; // Buffer MISS
+        if (disk_sim) // DISK SIMULATION
+        {
+          string datFilePath = "./rawdata_database.dat";
+          std::fstream file(datFilePath, std::ios::in | std::ios::out | std::ios::binary);
+          if (!file) 
+          {
+            std::cerr << "Unable to open file." << std::endl;
+            return 1;
+          }
+          int byteStart = pageId * 4096; // 4KB page
+          file.seekg(byteStart, std::ios::beg);
 
-        //buffer_instance->wsrReferPage(pageId, true); //This is set to true as it is a write operation - RGVA
+          if (!file) 
+          {
+              std::cerr << "Seek failed. Check if the position is beyond the file size." << std::endl;
+              file.close();
+              return 1;
+          }
+          Page bufferPage = Page(pageId);
 
-        if (disk_sim) {
+          file.read(bufferPage.getPageContent(), 4096); // Read the database entries into a buffer page, 4096 because of page size
+          // bufferPage.printAllPageEntries(); // For Debug
 
-        } else {
+          if (!file) {
+            std::cerr << "Read failed. Check if there are enough bytes left in the file." << std::endl;
+            file.close();
+            return 1;
+          }
+          file.close();
 
+          // We then write the requested entry into the page
+          char* buffer = bufferPage.getPageContent();
+          auto& entry_size = buffer_instance->entry_size;
+          int entry_cnter = 0;
+          for (int i = offset; i < offset + entry_size; i++) // Runtime is O(k) where k is the size of the entry.
+          {
+            buffer[i] = new_entry[entry_cnter]; // Here we write to our buffer page
+            entry_cnter++;
+          }
+          bufferPage.setDirtyPage(true); // Set the page is dirty as it doesnt reflect the actual database data
+          bufferpool.prepend(bufferPage, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
+          Buffer::write_io++;
+          return 1;
+        } 
+          else // NOT DISK SIMULATION
+        {
+          Page x = Page(pageId); // Create a dummy page | Here we simulate us going into disk and getting the associated page.
+          // We then write in it... (pretend it does here)
+          x.setDirtyPage(true); // Set the page to be dirty
+          bufferpool.prepend(x, pageId, disk_sim, Buffer::buffer_miss, buffer_instance->algorithm); // Insert the page into the Buffer pool
+          printf("[DEBUG] "); // Debug
+          bufferpool.display(); // Will slowdown and effect Runtime
         }
-      } else {
-        Buffer::buffer_hit++;
-        if (disk_sim) {
-
-        } else {
-
+        return 1;
+      } 
+        else 
+      {
+        Buffer::buffer_hit++; // Buffer HIT
+        if (disk_sim) // DISK SIMULATION
+        {
+          Page hitBufferPage = bufferpool.getPage(pageId)->data;
+          char* buffer = hitBufferPage.getPageContent();
+          auto& entry_size = buffer_instance->entry_size;
+          int entry_cnter = 0;
+          string entry = "";
+          for (int i = offset; i < offset + entry_size; i++) // Runtime is O(k) where k is the size of the entry.
+          {
+            buffer[i] = new_entry[entry_cnter]; // Here we write to our buffer page
+            entry = entry +  buffer[i]; // Just as a sanity check
+            entry_cnter++;
+          }
+          printf("[WRITE CACHE HIT | DISK SIMULATION] Page & Offset Query: %d, %d. WRITTEN & Returned Entry: %s\n", pageId, offset, entry.c_str());
+          return 1;
+        } 
+          else // NOT DISK SIMULATION
+        { 
+          printf("[WRITE CACHE HIT | NOT DISK SIMULATION] Getting Entry and Pretending to WRITE & Return Data to Satisfy Query: %d, %d.\n", pageId, offset);
+          // printf("[DEBUG] "); // Debug
+          // bufferpool.display(); // Will slowdown and effect Runtime
         }
       }
     }
@@ -403,7 +546,7 @@ int WorkloadExecutor::unpin(Buffer* buffer_instance, int pageId)
 // We can assume that the entry sizes are within 4KB (it won't spill over a page)
 // ---- Page Constructor ----
 Page::Page(int pageId)
-: pageId(pageId), dirty(false)
+: pageId(pageId), dirty(false), cold(false)
 {
   std::fill_n(pageContent, 4096, '0'); // Fill it up with 0. We know all entries are alphebetical data.
 }
