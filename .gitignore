@@ -1,7 +1,6 @@
 buffermanager.dSYM/
 buffermanager
 *.txt
+rawdata_database.dat
 .DS_Store
-rawdata_database.dat
 *.dat
-rawdata_database.dat
