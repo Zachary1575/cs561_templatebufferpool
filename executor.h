@@ -1,4 +1,3 @@
- 
 #include "parameter.h"
 
 #include <string>

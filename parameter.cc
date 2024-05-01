@@ -16,7 +16,7 @@ Simulation_Environment::Simulation_Environment()
   int num_operations = 10000;
   float perct_reads = 70;
   float perct_writes = 30;
-  int algorithm = 0;
+  int algorithm = 1;
 
   float skewed_perct = 100;
   float skewed_data_perct = 100;
