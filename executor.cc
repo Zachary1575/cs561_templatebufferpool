@@ -189,11 +189,12 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
     if (cache_page == nullptr) {
       Buffer::buffer_miss++;
 
-      if (bufferpool.current_page_cnt >= Buffer::max_buffer_size) {
-        buffer_instance->cflruEvictPage(); // Evict pages using CFLRU logic
+      if (bufferpool.current_page_cnt >= bufferpool.page_capacity) {
+        int evictionCount = bufferpool.cflruEvictPage(disk_sim, Buffer::buffer_miss); // Evict pages using CFLRU logic
+        bufferpool.current_page_cnt = bufferpool.current_page_cnt - evictionCount;
       }
       if (disk_sim) {
-        Page newPage = buffer_instance->simulateDiskRead(pageId);
+        Page newPage = bufferpool.simulateDiskRead(pageId);
         bufferpool.prepend(newPage, pageId, disk_sim, Buffer::buffer_miss);
         Buffer::read_io++;
       } else {
@@ -219,7 +220,7 @@ int WorkloadExecutor::read(Buffer* buffer_instance, int pageId, int offset, int 
   }
 
   if (algorithm == 3) { // LRU-WSR
-    buffer_instance->wsrReferPage(pageId, false); //This is set to false as it is a read operation - RGVA
+    //buffer_instance->wsrReferPage(pageId, false); //This is set to false as it is a read operation - RGVA
   }
 
   return 1;
@@ -334,11 +335,12 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
       if (cache_page == nullptr) {
         Buffer::buffer_miss++;
         if (bufferpool.current_page_cnt >= bufferpool.page_capacity) {
-          buffer_instance->cflruEvictPage(); // Evict pages using CFLRU logic
+          int evictionCount = bufferpool.cflruEvictPage(disk_sim, Buffer::buffer_miss); // Evict pages using CFLRU logic
+          bufferpool.current_page_cnt = bufferpool.current_page_cnt - evictionCount;
         }
 
         if (disk_sim) {
-          Page newPage = buffer_instance->simulateDiskRead(pageId);
+          Page newPage = bufferpool.simulateDiskRead(pageId);
           newPage.setDirtyPage(true);
           bufferpool.prepend(newPage, pageId, disk_sim, Buffer::buffer_miss);
           Buffer::write_io++;
@@ -362,7 +364,30 @@ int WorkloadExecutor::write(Buffer* buffer_instance, int pageId, int offset, con
     }
 
     if (algorithm == 3) { // LRU-WSR
-      buffer_instance->wsrReferPage(pageId, true); //This is set to true as it is a write operation - RGVA
+      auto& bufferpool = buffer_instance->bufferpool_LRU;
+      auto& disk_sim = buffer_instance->simulation_disk;
+
+      bufferpool.instructions_seen++;
+      printf("Total Istructions Seen is: %d!\n", bufferpool.instructions_seen);
+      Page* cache_page = bufferpool.lookupInBuffer(pageId);
+      if (cache_page == nullptr) {
+        Buffer::buffer_miss++;
+
+        //buffer_instance->wsrReferPage(pageId, true); //This is set to true as it is a write operation - RGVA
+
+        if (disk_sim) {
+
+        } else {
+
+        }
+      } else {
+        Buffer::buffer_hit++;
+        if (disk_sim) {
+
+        } else {
+
+        }
+      }
     }
   return 1;
 }
